@@ -316,15 +316,3 @@ FastAPI app with JWT auth (SQLite `users.db` for user storage). Key endpoints:
 | `/admin/shap-images/{month}/{filename}` | GET | Serve SHAP PNG images |
 
 The `/admin/custom-predict` endpoint re-applies the full FE pipeline (without congestion or material counts) using stored training artifacts.
-
----
-
-## 9. Streamlit UI ([main.py](file:///c:/Users/Sadaf%20Ambreen/Desktop/otif/backend/otif-model/app/main.py))
-
-Four tabs:
-1. **Model Dashboard** — Hero metrics, confusion matrix, ROC/PR curves, prediction distribution
-2. **XAI SHAP Explanation** — Global SHAP bar chart, local order-level table with GenAI row-level explanations
-3. **Custom Prediction** — Upload CSV/Excel → preprocess → FE → predict → SHAP → export
-4. **Data Management** — SQL sync, local repo overwrite/append, full backtest, clear repo
-
-Both the API and Streamlit integrate with `otif-genai` (`llm_explainer.summarize_reason`) for natural-language explanations of individual orders.
