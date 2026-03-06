@@ -23,6 +23,8 @@ export interface OTIFRecord {
   probMiss?: number;
   /** SHAP-based risk signals extracted from CSV top features */
   riskSignals?: string;
+  /** All raw CSV column values keyed by lowercase header name */
+  rawData: Record<string, string>;
 }
 
 export interface DashboardSummary {

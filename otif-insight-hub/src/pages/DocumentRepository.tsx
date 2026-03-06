@@ -60,7 +60,8 @@ export default function DocumentRepository() {
       setErrorMessage("No valid records were found in this file. Please confirm the OTIF export format and try again.");
       return;
     }
-    setDashboardData(parsed, otifFile.filename);
+    const rawHeaders = parsed[0] ? Object.keys(parsed[0].rawData) : [];
+    setDashboardData(parsed, otifFile.filename, rawHeaders);
     navigate("/dashboard");
   };
 

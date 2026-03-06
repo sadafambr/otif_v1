@@ -66,6 +66,7 @@ export function useFiles() {
 export function useCSVPreview() {
   const [records, setRecords] = useState<OTIFRecord[]>([]);
   const [loading, setLoading] = useState(false);
+  const [rawHeaders, setRawHeaders] = useState<string[]>([]);
 
   const parseCSV = useCallback(async (file: File): Promise<OTIFRecord[]> => {
     setLoading(true);
@@ -74,7 +75,9 @@ export function useCSVPreview() {
       const lines = text.trim().split("\n");
       if (lines.length < 2) return [];
 
-      const headers = lines[0].split(",").map(h => h.trim().toLowerCase());
+      const headers = lines[0].split(",").map(h => h.trim());
+      const headersLower = headers.map(h => h.toLowerCase());
+      setRawHeaders(headers);
       const parsed: OTIFRecord[] = [];
 
       for (let i = 1; i < lines.length; i++) {
@@ -82,7 +85,7 @@ export function useCSVPreview() {
         if (cols.length < 2) continue;
 
         const get = (key: string) => {
-          const idx = headers.indexOf(key);
+          const idx = headersLower.indexOf(key);
           return idx >= 0 ? cols[idx] : "";
         };
 
@@ -212,6 +215,12 @@ export function useCSVPreview() {
           if (feat) shapSignals.push(feat);
         }
 
+        // Build rawData map: every CSV column keyed by lowercase header
+        const rawData: Record<string, string> = {};
+        for (let h = 0; h < headersLower.length; h++) {
+          rawData[headersLower[h]] = cols[h] || "";
+        }
+
         parsed.push({
           rowNum: i,
           salesOrder: getAny("sales_order", "salesorder", "order", "sales order"),
@@ -225,6 +234,7 @@ export function useCSVPreview() {
           probHit: probHit ?? undefined,
           probMiss: probMiss ?? undefined,
           riskSignals: shapSignals.length > 0 ? shapSignals.join("; ") : undefined,
+          rawData,
         });
       }
 
@@ -238,7 +248,7 @@ export function useCSVPreview() {
     }
   }, []);
 
-  return { records, loading, parseCSV, setRecords };
+  return { records, loading, parseCSV, setRecords, rawHeaders };
 }
 
 // Hook for dashboard data

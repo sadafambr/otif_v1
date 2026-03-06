@@ -26,7 +26,7 @@ export default function Dashboard() {
 
   // Load data from in-memory store
   useEffect(() => {
-    const { records } = getDashboardData();
+    const { records, rawHeaders } = getDashboardData();
     if (records.length > 0 && orders.length === 0) {
       loadDashboard(records);
     }
@@ -170,7 +170,11 @@ export default function Dashboard() {
         </div>
 
         {/* Order Table */}
-        <OrderTable orders={filteredOrders} onOrderClick={handleOrderClick} />
+        <OrderTable
+          orders={filteredOrders}
+          rawHeaders={getDashboardData().rawHeaders}
+          onOrderClick={handleOrderClick}
+        />
 
         {/* Order Detail Modal */}
         {selectedOrder && (

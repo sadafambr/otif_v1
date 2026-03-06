@@ -125,4 +125,13 @@
   .filter-chip-inactive {
     @apply filter-chip bg-card text-muted-foreground border-border hover:bg-accent;
   }
+  .column-filter-popover {
+    @apply rounded-lg border bg-card shadow-lg;
+    animation: filter-fade-in 0.15s ease-out;
+  }
+}
+
+@keyframes filter-fade-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to { opacity: 1; transform: translateY(0); }
 }
