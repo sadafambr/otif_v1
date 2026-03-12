@@ -25,9 +25,10 @@ def get_local_master_data(config):
     master_path = Path(config['paths']['raw_data']) / "master_orders.parquet"
     if master_path.exists():
         df = pd.read_parquet(master_path)
-        date_col = config['features']['split_date_col']
-        if date_col in df.columns:
-            df[date_col] = pd.to_datetime(df[date_col], errors='coerce')
+        date_cols = config['features'].get('date_cols', [])
+        for col in date_cols:
+            if col in df.columns:
+                df[col] = pd.to_datetime(df[col], errors='coerce')
         return df
     return None
 
@@ -75,6 +76,12 @@ def fetch_data(config, query, start_date=None, end_date=None, use_cache=True):
     engine = get_engine(config)
     df = pd.read_sql(query, engine)
     
+    # Ensure date columns are converted
+    date_cols = config['features'].get('date_cols', [])
+    for col in date_cols:
+        if col in df.columns:
+            df[col] = pd.to_datetime(df[col], errors='coerce')
+
     cache_path.parent.mkdir(parents=True, exist_ok=True)
     df.to_parquet(cache_path, index=False)
     return df

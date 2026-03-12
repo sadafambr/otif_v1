@@ -110,8 +110,22 @@ def apply_miss_rate_maps(df, global_miss, maps):
 
 def build_and_apply_congestion_features(train_df, test_df, date_col="SO create date", windows=(7, 30), plant_col="Plant", material_col="Material", shipto_col="Ship_To"):
     tr, te = train_df.copy(), test_df.copy()
+    
+    # Safety: Ensure date_col is datetime and grouping columns are strings
+    for d in [tr, te]:
+        if date_col in d.columns and not pd.api.types.is_datetime64_any_dtype(d[date_col]):
+            d[date_col] = pd.to_datetime(d[date_col], errors='coerce')
+    
+    # Crucial: Save original index to restore order and labels later (merge_asof resets index)
+    tr["_orig_idx_labels"] = tr.index
+    te["_orig_idx_labels"] = te.index
+            
     for col, prefix in [(plant_col, "f_plant_orders"), (material_col, "f_material_orders"), (shipto_col, "f_shipto_orders")]:
         if col in tr.columns:
+            tr[col] = tr[col].astype(str)
+            if col in te.columns:
+                te[col] = te[col].astype(str)
+                
             for w in windows:
                 feat = f"{prefix}_{w}d"
                 # Simplified rolling count on history
@@ -123,6 +137,10 @@ def build_and_apply_congestion_features(train_df, test_df, date_col="SO create d
                 te = pd.merge_asof(te.sort_values(date_col), rolled.sort_values(date_col), on=date_col, by=col, direction="backward")
                 tr[feat] = tr[feat].fillna(0)
                 te[feat] = te[feat].fillna(0)
+    
+    # Restore original order and labels
+    tr = tr.set_index("_orig_idx_labels").sort_index()
+    te = te.set_index("_orig_idx_labels").sort_index()
     return tr, te
 
 def fit_train_thresholds(train_df, qty_col="Ordered_Qty_in_Kgs", value_col="f_unit_price_log", qty_q=0.90, value_q=0.90):
@@ -134,10 +152,13 @@ def fit_train_thresholds(train_df, qty_col="Ordered_Qty_in_Kgs", value_col="f_un
 
 def add_order_complexity_features(df, thresholds, qty_col="Ordered_Qty_in_Kgs", value_col="f_unit_price_log"):
     out = df.copy()
-    qty = pd.to_numeric(out.get(qty_col), errors="coerce").fillna(0)
+    qty_s = out[qty_col] if qty_col in out.columns else pd.Series(0, index=out.index)
+    qty = pd.to_numeric(qty_s, errors="coerce").fillna(0)
     out["f_qty_log"] = np.log1p(qty.clip(lower=0))
     out["f_high_qty_flag"] = (qty >= thresholds.get("qty_p90", 0)).astype(int)
-    val = pd.to_numeric(out.get(value_col), errors="coerce").fillna(0)
+    
+    val_s = out[value_col] if value_col in out.columns else pd.Series(0, index=out.index)
+    val = pd.to_numeric(val_s, errors="coerce").fillna(0)
     out["f_high_value_flag"] = (val >= thresholds.get("value_p90", 0)).astype(int)
     tight = out["f_is_extremely_tight"] if "f_is_extremely_tight" in out.columns else pd.Series(0, index=out.index)
     tight = tight.fillna(0).astype(int)
@@ -300,3 +321,63 @@ def run_fe_pipeline(train_df, test_df, config):
         "gap_q": gap_q,
         "imputation": med_vals.to_dict()
     }
+
+def run_inference_pipeline(df_input, fe_artifacts, config, history_df=None):
+    """
+    Unified inference pipeline to ensure consistency between training/backtest and custom prediction.
+    """
+    out = df_input.copy()
+    
+    # 1. Safe features
+    out = add_safe_features(out)
+    
+    # 2. Congestion (Requires history)
+    if history_df is not None:
+        # We only need to compute congestion for the new records
+        # build_and_apply_congestion_features expects both tr and te
+        # We use history_df as tr and out as te
+        _, out = build_and_apply_congestion_features(history_df, out)
+    else:
+        # Fallback if no history (not ideal, but prevents crash)
+        for prefix in ["f_plant_orders", "f_material_orders", "f_shipto_orders"]:
+            for w in [7, 30]:
+                feat = f"{prefix}_{w}d"
+                if feat not in out.columns:
+                    out[feat] = 0.0
+    
+    # 3. Miss rates (Standard)
+    out = apply_miss_rate_maps(out, fe_artifacts['global_miss'], fe_artifacts['maps'])
+    
+    # 4. State Miss Rate
+    if 'state_map' in fe_artifacts:
+        out = apply_rate_map(out, "State - Province", "f_state_miss_rate", fe_artifacts.get('g_state', 0.2), fe_artifacts['state_map'])
+    
+    # 5. Material History Counts
+    if history_df is not None and "Material" in history_df.columns:
+        mat_counts = history_df.groupby("Material").size()
+        out["f_mat_total_orders_log"] = np.log1p(out["Material"].map(mat_counts).fillna(0))
+    else:
+        out["f_mat_total_orders_log"] = 0.0
+        
+    # 6. Thresholds (qty, value)
+    out = add_order_complexity_features(out, fe_artifacts['thresholds'])
+    
+    # 7. Tolerance
+    out = add_tolerance_risk_features(out, "Overdeliv_Tolerance_OTIF", "Underdel_Tolerance_OTIF")
+    
+    # 8. Interaction stack
+    out = add_interaction_stack_features(out)
+    
+    # 9. Gap bin logic
+    out["f_gap_bin"] = (out["f_lead_gap_days"] > fe_artifacts.get('gap_q', 0)).astype(int)
+    
+    # 10. Robust Imputation
+    feature_cols = [c for c in out.columns if c.startswith("f_")]
+    if 'imputation' in fe_artifacts:
+        for col, val in fe_artifacts['imputation'].items():
+            if col in out.columns:
+                out[col] = out[col].fillna(val)
+            else:
+                out[col] = val
+                
+    return out

@@ -74,10 +74,10 @@ export const DEFAULT_COLUMN_KEYS = [
     "material",
     "plant",
     "requested delivery date",
-    "so create date",
-    "prob_miss",
-    "otif_hit/miss",
-    "top1_feature",
+    "leadTime",
+    "riskScore",
+    "status",
+    "riskSignals"
 ];
 
 /**
@@ -88,7 +88,7 @@ export function resolveDefaultColumn(defaultKey: string, availableHeaders: strin
     // Exact match (case-insensitive)
     const lower = defaultKey.toLowerCase();
     const exact = availableHeaders.find(h => h.toLowerCase() === lower);
-    if (exact) return exact.toLowerCase();
+    if (exact) return exact;
 
     // Alias maps for common variations
     const aliases: Record<string, string[]> = {
@@ -98,16 +98,17 @@ export function resolveDefaultColumn(defaultKey: string, availableHeaders: strin
         "plant": ["plant name"],
         "requested delivery date": ["req_delivery", "requested_delivery", "requested_delivery_date", "req. deliv. date", "req delivery date"],
         "so create date": ["so_create_date", "order date", "order_date", "sales order date"],
-        "prob_miss": ["risk_score", "riskscore", "miss probability"],
-        "otif_hit/miss": ["otif_hit", "status", "prediction"],
+        "riskscore": ["risk_score", "prob_miss", "miss probability"],
+        "status": ["otif_hit/miss", "otif_hit", "prediction"],
+        "risksignals": ["risk signals"],
         "top1_feature": [],
     };
 
     const candidates = aliases[lower] || [];
     for (const alias of candidates) {
         const match = availableHeaders.find(h => h.toLowerCase() === alias.toLowerCase());
-        if (match) return match.toLowerCase();
+        if (match) return match;
     }
 
-    return lower;
+    return defaultKey;
 }

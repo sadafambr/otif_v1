@@ -50,7 +50,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   const [sortBy, setSortBy] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
-  const pageSize = 10;
+  const pageSize = 25;
 
   // Available columns: from data or rawHeaders + computed
   const availableColumnKeys = useMemo(() => {
@@ -87,7 +87,10 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
         const merged = [...stillVisible, ...added];
         return availableColumnKeys.filter((k) => merged.includes(k));
       }
-      return [...availableColumnKeys];
+      // Initialize with DEFAULT_COLUMN_KEYS
+      const defaultVisible = DEFAULT_COLUMN_KEYS.map(k => resolveDefaultColumn(k, availableColumnKeys))
+        .filter(k => availableColumnKeys.includes(k));
+      return defaultVisible.length > 0 ? Array.from(new Set(defaultVisible)) : [...availableColumnKeys];
     });
   }, [availableColumnKeys.join(",")]);
 
@@ -419,10 +422,10 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
         </p>
       </div>
 
-      <div className="overflow-auto px-6">
-        <table className="w-full text-sm text-left">
+      <div className="overflow-auto px-6 h-[500px] relative">
+        <table className="w-full text-sm text-left border-separate border-spacing-0">
           <thead>
-            <tr className="border-b">
+            <tr>
               {visibleColumnKeys.map((key) => {
                 const label = getColumnDisplayName(key);
                 const isSalesOrder = key === "sales order" || key === "sales_order";
@@ -436,7 +439,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                 const sortKey: SortKey | null =
                   isSalesOrder ? "salesOrder" : isCustomer ? "customer" : isMaterial ? "material" : isPlant ? "plant" : isReqDelivery ? "reqDelivery" : isRiskScore ? "riskScore" : isStatus ? "status" : null;
                 return (
-                  <th key={key} className="pb-3 pr-4 text-left">
+                  <th key={key} className="sticky top-0 z-10 bg-card pb-3 pt-3 pr-4 text-left shadow-[inset_0_-1px_0_hsl(var(--border))]">
                     <div className="flex items-center gap-0.5">
                       {sortKey ? (
                         <button

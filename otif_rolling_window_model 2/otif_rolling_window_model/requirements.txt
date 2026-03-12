@@ -1,0 +1,15 @@
+pandas
+numpy
+lightgbm
+scikit-learn
+shap
+sqlalchemy
+pyodbc
+joblib
+streamlit
+pyyaml
+python-pptx
+matplotlib
+seaborn
+plotly
+fpdf2
