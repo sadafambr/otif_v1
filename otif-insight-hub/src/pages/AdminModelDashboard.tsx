@@ -512,14 +512,14 @@ function TabDashboard({ month, token }: { month: string | undefined; token: stri
                     {/* Legend */}
                     <div className="space-y-3 text-sm">
                       <div className="flex items-center gap-2">
-                        <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: "hsl(160, 84%, 39%)" }} />
+                        <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: "hsl(var(--success))" }} />
                         <span className="text-foreground font-medium">HIT</span>
                         <span className="text-muted-foreground">
                           {metrics.hit_count.toLocaleString()} ({hitPct.toFixed(1)}%)
                         </span>
                       </div>
                       <div className="flex items-center gap-2">
-                        <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: "hsl(0, 72%, 51%)" }} />
+                        <span className="inline-block h-3 w-3 rounded-sm" style={{ backgroundColor: "hsl(var(--risk))" }} />
                         <span className="text-foreground font-medium">MISS</span>
                         <span className="text-muted-foreground">
                           {metrics.miss_count.toLocaleString()} ({missPct.toFixed(1)}%)
@@ -612,7 +612,7 @@ function PerformanceCurves({ month, token }: { month: string | undefined; token:
             xLabel="False Positive Rate"
             yLabel="True Positive Rate"
             title="ROC Curve"
-            color="hsl(14, 90%, 55%)"
+            color="hsl(var(--primary))"
             legendLabel={`ROC (AUC = ${data.roc.auc.toFixed(2)})`}
             diagonalGuide
           />
@@ -674,7 +674,7 @@ function TabShap({ month, token }: { month: string | undefined; token: string | 
                 </div>
                 <div className="flex-1 overflow-hidden rounded-full bg-muted">
                   <div
-                    className="h-2.5 rounded-full bg-gradient-to-r from-amber-400 to-orange-500 transition-all"
+                    className="h-2.5 rounded-full bg-gradient-to-r from-emerald-400 to-primary transition-all"
                     style={{ width: `${Math.min(100, (row.mean_abs_shap / maxShap) * 100)}%` }}
                   />
                 </div>

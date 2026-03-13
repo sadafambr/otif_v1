@@ -6,15 +6,19 @@ import { CSVPreviewModal } from "@/components/CSVPreviewModal";
 import { useFiles, useCSVPreview } from "@/hooks/useOTIF";
 import { useNavigate } from "react-router-dom";
 import { setDashboardData } from "@/lib/dataStore";
+import { enrichOrders } from "@/lib/api";
+import { useAuth } from "@/hooks/useAuth";
 import type { OTIFFile } from "@/types/otif";
 
 export default function DocumentRepository() {
   const { files, loading, uploadFile, deleteFile } = useFiles();
   const { records, loading: previewLoading, parseCSV } = useCSVPreview();
+  const { token } = useAuth();
   const navigate = useNavigate();
 
   const [previewFile, setPreviewFile] = useState<OTIFFile | null>(null);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [enriching, setEnriching] = useState(false);
   // Store raw File objects keyed by OTIFFile id
   const rawFilesRef = useRef<Map<string, File>>(new Map());
 
@@ -60,6 +64,42 @@ export default function DocumentRepository() {
       setErrorMessage("No valid records were found in this file. Please confirm the OTIF export format and try again.");
       return;
     }
+
+    // --- Skip automatic enrichment (prioritize CSV data) ---
+    /*
+    setEnriching(true);
+    try {
+      const enriched = await enrichOrders(rawFile, token || undefined);
+      // Merge enriched data back into parsed records by row index
+      for (const eRow of enriched.rows) {
+        const idx = eRow.rowIndex;
+        if (idx >= 0 && idx < parsed.length) {
+          parsed[idx].probHit = eRow.probHit;
+          parsed[idx].probMiss = eRow.probMiss;
+          parsed[idx].riskScore = eRow.riskScore;
+          parsed[idx].status = eRow.prediction;
+          parsed[idx].top1Feature = eRow.top1Feature ?? undefined;
+          parsed[idx].top1Value = eRow.top1Value ?? undefined;
+          parsed[idx].top1Shap = eRow.top1Shap ?? undefined;
+          parsed[idx].top2Feature = eRow.top2Feature ?? undefined;
+          parsed[idx].top2Value = eRow.top2Value ?? undefined;
+          parsed[idx].top2Shap = eRow.top2Shap ?? undefined;
+          parsed[idx].top3Feature = eRow.top3Feature ?? undefined;
+          parsed[idx].top3Value = eRow.top3Value ?? undefined;
+          parsed[idx].top3Shap = eRow.top3Shap ?? undefined;
+          // Build risk signals from SHAP features
+          const signals = [eRow.top1Feature, eRow.top2Feature, eRow.top3Feature].filter(Boolean);
+          parsed[idx].riskSignals = signals.length > 0 ? signals.join("; ") : undefined;
+        }
+      }
+    } catch (err) {
+      console.warn("Model enrichment unavailable, using client-side defaults:", err);
+      // Continue with un-enriched data — dashboard still works
+    } finally {
+      setEnriching(false);
+    }
+    */
+
     const rawHeaders = parsed[0] ? Object.keys(parsed[0].rawData) : [];
     setDashboardData(parsed, otifFile.filename, rawHeaders);
     navigate("/dashboard");
@@ -78,12 +118,16 @@ export default function DocumentRepository() {
           Upload, manage, and preview your OTIF CSV data files
         </p>
 
-        <FileUploadZone onFileSelect={handleUpload} disabled={loading || previewLoading} isLoading={loading || previewLoading} />
+        <FileUploadZone onFileSelect={handleUpload} disabled={loading || previewLoading || enriching} isLoading={loading || previewLoading || enriching} />
 
-        {(loading || previewLoading) && (
+        {(loading || previewLoading || enriching) && (
           <div className="mt-4 h-1 w-full overflow-hidden rounded-full bg-muted">
             <div className="h-full w-1/3 animate-pulse bg-primary" />
           </div>
+        )}
+
+        {enriching && (
+          <p className="mt-2 text-sm text-primary">Running model predictions & SHAP analysis…</p>
         )}
 
         {errorMessage && (

@@ -70,6 +70,7 @@ export function getDisplayName(rawHeader: string): string {
  */
 export const DEFAULT_COLUMN_KEYS = [
     "sales order",
+    "so create date",
     "customer name",
     "material",
     "plant",

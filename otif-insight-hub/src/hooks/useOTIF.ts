@@ -75,13 +75,44 @@ export function useCSVPreview() {
       const lines = text.trim().split("\n");
       if (lines.length < 2) return [];
 
-      const headers = lines[0].split(",").map(h => h.trim());
+      // RFC 4180-aware CSV line parser: handles commas inside quoted fields
+      const parseCSVLine = (line: string): string[] => {
+        const result: string[] = [];
+        let current = "";
+        let inQuotes = false;
+        for (let c = 0; c < line.length; c++) {
+          const ch = line[c];
+          if (inQuotes) {
+            if (ch === '"' && c + 1 < line.length && line[c + 1] === '"') {
+              current += '"';
+              c++; // skip escaped quote
+            } else if (ch === '"') {
+              inQuotes = false;
+            } else {
+              current += ch;
+            }
+          } else {
+            if (ch === '"') {
+              inQuotes = true;
+            } else if (ch === ',') {
+              result.push(current.trim());
+              current = "";
+            } else {
+              current += ch;
+            }
+          }
+        }
+        result.push(current.trim());
+        return result;
+      };
+
+      const headers = parseCSVLine(lines[0]);
       const headersLower = headers.map(h => h.toLowerCase());
       setRawHeaders(headers);
       const parsed: OTIFRecord[] = [];
 
       for (let i = 1; i < lines.length; i++) {
-        const cols = lines[i].split(",").map(c => c.trim());
+        const cols = parseCSVLine(lines[i]);
         if (cols.length < 2) continue;
 
         const get = (key: string) => {
@@ -99,28 +130,9 @@ export function useCSVPreview() {
         };
 
         const rawStatus =
-          getAny("otif_hit/miss", "otif_hit", "status", "prediction");
+          getAny("otif_hit/miss", "otif_hit", "status", "prediction", "otif_status", "otif hit/miss");
 
         const normalizedStatus = rawStatus.trim().toLowerCase();
-
-        let status: "Hit" | "Miss";
-        if (!normalizedStatus) {
-          status = "Hit";
-        } else if (
-          normalizedStatus.includes("miss") ||
-          normalizedStatus.includes("late")
-        ) {
-          status = "Miss";
-        } else if (
-          normalizedStatus.includes("hit") ||
-          normalizedStatus.includes("on-time") ||
-          normalizedStatus.includes("ontime") ||
-          normalizedStatus.includes("on time")
-        ) {
-          status = "Hit";
-        } else {
-          status = "Hit";
-        }
 
         // Parse probability: normalise 0–1 → percent, clamp to 0–100
         const parseProb = (value: string): number | null => {
@@ -132,15 +144,39 @@ export function useCSVPreview() {
         };
 
         const probHit = parseProb(
-          getAny("prob_hit", "hit_probability", "hit probability")
+          getAny("otif_hit", "prob_hit", "hit_probability", "hit probability", "probability_hit", "hit_prob")
         );
         const probMiss = parseProb(
-          getAny("prob_miss", "risk_score", "riskscore", "miss probability")
+          getAny("otif_miss", "prob_miss", "risk_score", "riskscore", "miss probability", "probability_miss", "miss_prob", "risk_percent")
         );
+
+        let status: "Hit" | "Miss";
+        // If we have explicit probabilities, let them drive the label to avoid contradictions
+        if (probHit !== undefined && probMiss !== undefined) {
+          status = probHit >= probMiss ? "Hit" : "Miss";
+        } else if (
+          normalizedStatus.includes("miss") ||
+          normalizedStatus.includes("late") ||
+          normalizedStatus === "0" ||
+          normalizedStatus === "false"
+        ) {
+          status = "Miss";
+        } else if (
+          normalizedStatus.includes("hit") ||
+          normalizedStatus.includes("on-time") ||
+          normalizedStatus.includes("ontime") ||
+          normalizedStatus.includes("on time") ||
+          normalizedStatus === "1" ||
+          normalizedStatus === "true"
+        ) {
+          status = "Hit";
+        } else {
+          status = "Hit";
+        }
 
         // Derive riskScore — same logic as Streamlit (risk_score = 1 - hit_probability)
         let riskScore: number;
-        const rawRisk = getAny("risk_score", "riskscore");
+        const rawRisk = getAny("risk_score", "riskscore", "risk_percent", "risk");
         if (rawRisk) {
           const n = parseFloat(rawRisk);
           if (Number.isFinite(n)) {
@@ -160,14 +196,14 @@ export function useCSVPreview() {
 
         // Derive lead time (gap days between request lead and material lead)
         // Priority: explicit column → f_lead_gap_days → f_request - f_material → raw dates
-        let leadTime = getAny("lead_time", "leadtime");
+        let leadTime = getAny("lead_time", "leadtime", "lead days", "lead_days");
         if (!leadTime) {
-          const gap = parseFloat(get("f_lead_gap_days"));
+          const gap = parseFloat(getAny("f_lead_gap_days", "lead_gap_days", "gap_days"));
           if (Number.isFinite(gap)) {
             leadTime = String(Math.round(gap));
           } else {
-            const reqLead = parseFloat(get("f_request_lead_days"));
-            const matLead = parseFloat(get("f_material_lead_days"));
+            const reqLead = parseFloat(getAny("f_request_lead_days", "request_lead_days", "request_lead"));
+            const matLead = parseFloat(getAny("f_material_lead_days", "material_lead_days", "material_lead"));
             if (Number.isFinite(reqLead) && Number.isFinite(matLead)) {
               leadTime = String(Math.round(reqLead - matLead));
             } else {
@@ -177,11 +213,11 @@ export function useCSVPreview() {
               // f_lead_gap_days = f_request_lead_days - f_material_lead_days
               //                 = (RDD - Mat_Avl_Date).days
               const rddStr = getAny("requested delivery date", "requested_delivery_date",
-                "req. deliv. date", "req_delivery", "requested_delivery", "req delivery date");
+                "req. deliv. date", "req_delivery", "requested_delivery", "req delivery date", "rdd");
               const matAvlStr = getAny("mat_avl_date_otif", "mat avl date otif",
-                "material availability date", "mat_avail_date");
+                "material availability date", "mat_avail_date", "mad");
               const soDateStr = getAny("so create date", "so_create_date",
-                "order date", "order_date", "sales order date");
+                "order date", "order_date", "sales order date", "so_date");
 
               const parseDate = (s: string) => {
                 if (!s) return null;
@@ -210,12 +246,28 @@ export function useCSVPreview() {
 
         // Extract SHAP risk signals from top features
         const shapSignals: string[] = [];
-        for (const key of ["top1_feature", "top2_feature", "top3_feature"]) {
+        for (const key of ["top1_feature", "top2_feature", "top3_feature", "top_feature_1", "top_feature_2", "top_feature_3", "shap_feature_1", "shap_feature_2", "shap_feature_3"]) {
           const feat = get(key);
           if (feat) shapSignals.push(feat);
         }
 
-        // Build rawData map: every CSV column keyed by lowercase header
+        // Extract individual SHAP top-feature fields for API forwarding
+        const top1Feature = getAny("top1_feature", "top_feature_1", "shap_feature_1") || undefined;
+        const top1Value = getAny("top1_value", "top_value_1", "shap_value_1") || undefined;
+        const top1ShapRaw = parseFloat(getAny("top1_shap", "top_shap_1", "shap_impact_1"));
+        const top1Shap = Number.isFinite(top1ShapRaw) ? top1ShapRaw : undefined;
+
+        const top2Feature = getAny("top2_feature", "top_feature_2", "shap_feature_2") || undefined;
+        const top2Value = getAny("top2_value", "top_value_2", "shap_value_2") || undefined;
+        const top2ShapRaw = parseFloat(getAny("top2_shap", "top_shap_2", "shap_impact_2"));
+        const top2Shap = Number.isFinite(top2ShapRaw) ? top2ShapRaw : undefined;
+
+        const top3Feature = getAny("top3_feature", "top_feature_3", "shap_feature_3") || undefined;
+        const top3Value = getAny("top3_value", "top_value_3", "shap_value_3") || undefined;
+        const top3ShapRaw = parseFloat(getAny("top3_shap", "top_shap_3", "shap_impact_3"));
+        const top3Shap = Number.isFinite(top3ShapRaw) ? top3ShapRaw : undefined;
+
+        // Build rawData map: every CSV column keyed by lowercase header name
         const rawData: Record<string, string> = {};
         for (let h = 0; h < headersLower.length; h++) {
           rawData[headersLower[h]] = cols[h] || "";
@@ -223,17 +275,21 @@ export function useCSVPreview() {
 
         parsed.push({
           rowNum: i,
-          salesOrder: getAny("sales_order", "salesorder", "order", "sales order"),
-          customer: getAny("customer", "customer name", "customer_name", "ship-to name", "ship to name"),
-          material: getAny("material", "material description", "material_description", "material id", "material code"),
-          plant: getAny("plant", "plant name"),
-          reqDelivery: getAny("req_delivery", "requested_delivery", "requested delivery date", "requested_delivery_date", "req. deliv. date", "req delivery date"),
+          salesOrder: getAny("sales_order", "salesorder", "order", "sales order", "so"),
+          customer: getAny("customer", "customer name", "customer_name", "ship-to name", "ship to name", "customer_id"),
+          material: getAny("material", "material description", "material_description", "material id", "material code", "product"),
+          plant: getAny("plant", "plant name", "location"),
+          reqDelivery: getAny("req_delivery", "requested_delivery", "requested delivery date", "requested_delivery_date", "req. deliv. date", "req delivery date", "rdd"),
+          soCreateDate: getAny("so create date", "so_create_date", "order date", "order_date", "sales order date", "so_date") || "",
           leadTime: leadTime || "",
           riskScore,
           status,
           probHit: probHit ?? undefined,
           probMiss: probMiss ?? undefined,
           riskSignals: shapSignals.length > 0 ? shapSignals.join("; ") : undefined,
+          top1Feature, top1Value, top1Shap,
+          top2Feature, top2Value, top2Shap,
+          top3Feature, top3Value, top3Shap,
           rawData,
         });
       }

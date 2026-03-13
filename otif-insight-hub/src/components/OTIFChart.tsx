@@ -1,5 +1,6 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
+import { ChevronDown, ChevronUp } from "lucide-react";
 import type { DashboardSummary } from "@/types/otif";
 
 interface OTIFChartProps {
@@ -7,6 +8,7 @@ interface OTIFChartProps {
 }
 
 export function OTIFChart({ summary }: OTIFChartProps) {
+  const [isExpanded, setIsExpanded] = useState(false);
   const data = useMemo(
     () => [
       { name: "OTIF Miss", value: summary.otifMiss, color: "hsl(0, 72%, 51%)" },
@@ -16,28 +18,45 @@ export function OTIFChart({ summary }: OTIFChartProps) {
   );
 
   return (
-    <div className="rounded-xl border bg-card p-6 shadow-sm animate-fade-in">
-      <h3 className="text-lg font-semibold text-foreground">OTIF Distribution</h3>
-      <p className="mb-6 text-sm text-muted-foreground">Order volume by OTIF prediction</p>
-      <ResponsiveContainer width="100%" height={140}>
-        <BarChart data={data} layout="vertical" barSize={32}>
-          <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(220, 13%, 91%)" />
-          <XAxis type="number" tick={{ fontSize: 12, fill: "hsl(220, 10%, 50%)" }} />
-          <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 13, fill: "hsl(220, 20%, 14%)" }} />
-          <Tooltip
-            contentStyle={{
-              borderRadius: 8,
-              border: "1px solid hsl(220, 13%, 91%)",
-              fontSize: 13,
-            }}
-          />
-          <Bar dataKey="value" radius={[0, 6, 6, 0]}>
-            {data.map((entry, index) => (
-              <Cell key={index} fill={entry.color} />
-            ))}
-          </Bar>
-        </BarChart>
-      </ResponsiveContainer>
+    <div className="rounded-xl border bg-card shadow-sm animate-fade-in overflow-hidden">
+      <button
+        onClick={() => setIsExpanded(!isExpanded)}
+        className="flex w-full items-center justify-between px-4 py-3 hover:bg-accent/50 transition-colors"
+      >
+        <div>
+          <h3 className="text-lg font-semibold text-foreground">OTIF Distribution</h3>
+          <p className="text-sm text-muted-foreground">Order volume by OTIF prediction</p>
+        </div>
+        {isExpanded ? (
+          <ChevronDown className="h-4 w-4 text-muted-foreground rotate-180 transition-transform" />
+        ) : (
+          <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform" />
+        )}
+      </button>
+
+      {isExpanded && (
+        <div className="px-6 pb-6">
+          <ResponsiveContainer width="100%" height={140}>
+            <BarChart data={data} layout="vertical" barSize={32}>
+              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(220, 13%, 91%)" />
+              <XAxis type="number" tick={{ fontSize: 12, fill: "hsl(220, 10%, 50%)" }} />
+              <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 13, fill: "hsl(220, 20%, 14%)" }} />
+              <Tooltip
+                contentStyle={{
+                  borderRadius: 8,
+                  border: "1px solid hsl(220, 13%, 91%)",
+                  fontSize: 13,
+                }}
+              />
+              <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+                {data.map((entry, index) => (
+                  <Cell key={index} fill={entry.color} />
+                ))}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      )}
     </div>
   );
 }

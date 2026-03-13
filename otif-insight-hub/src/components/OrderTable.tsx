@@ -4,8 +4,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ColumnFilterCheckbox } from "@/components/ColumnFilterCheckbox";
 import { ColumnFilterRange } from "@/components/ColumnFilterRange";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
+import { ColumnFilterDate } from "@/components/ColumnFilterDate";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
+import { Bookmark, RotateCcw, Save } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { getDisplayName, DEFAULT_COLUMN_KEYS, resolveDefaultColumn } from "@/lib/columnMapping";
 import type { OTIFRecord } from "@/types/otif";
@@ -127,6 +129,24 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   const [leadTimeMax, setLeadTimeMax] = useState<number | undefined>(undefined);
   const [riskScoreMin, setRiskScoreMin] = useState<number | undefined>(undefined);
   const [riskScoreMax, setRiskScoreMax] = useState<number | undefined>(undefined);
+  const [soDateStart, setSoDateStart] = useState<string | undefined>(undefined);
+  const [soDateEnd, setSoDateEnd] = useState<string | undefined>(undefined);
+
+
+  const clearAllFilters = () => {
+    setStatusFilter(new Set());
+    setPlantFilter(new Set());
+    setCustomerFilter(new Set());
+    setMaterialFilter(new Set());
+    setSalesOrderFilter(new Set());
+    setLeadTimeMin(undefined);
+    setLeadTimeMax(undefined);
+    setRiskScoreMin(undefined);
+    setRiskScoreMax(undefined);
+    setSoDateStart(undefined);
+    setSoDateEnd(undefined);
+    setSearch("");
+  };
 
   // Extract unique values from data for checkbox filters
   const uniquePlants = useMemo(() => [...new Set(orders.map((o) => o.plant).filter(Boolean))].sort(), [orders]);
@@ -135,13 +155,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   const uniqueSalesOrders = useMemo(() => [...new Set(orders.map((o) => o.salesOrder).filter(Boolean))].sort(), [orders]);
   const uniqueStatuses = useMemo(() => [...new Set(orders.map((o) => o.status).filter(Boolean))].sort(), [orders]);
 
-  // Compute lead time and risk score bounds
-  const leadTimeBounds = useMemo(() => {
-    const values = orders.map((o) => parseInt(o.leadTime, 10)).filter((v) => !isNaN(v));
-    if (values.length === 0) return { min: 0, max: 100 };
-    return { min: Math.min(...values), max: Math.max(...values) };
-  }, [orders]);
-
+  // Compute risk score bounds
   const riskScoreBounds = useMemo(() => {
     const values = orders.map((o) => o.riskScore).filter((v) => !isNaN(v));
     if (values.length === 0) return { min: 0, max: 100 };
@@ -205,11 +219,27 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
         return !isNaN(lt) && lt <= leadTimeMax;
       });
     }
+
     if (riskScoreMin !== undefined) {
       result = result.filter((o) => o.riskScore >= riskScoreMin);
     }
     if (riskScoreMax !== undefined) {
       result = result.filter((o) => o.riskScore <= riskScoreMax);
+    }
+    if (soDateStart) {
+      const start = new Date(soDateStart);
+      result = result.filter((o) => {
+        const d = new Date(o.soCreateDate);
+        return !isNaN(d.getTime()) && d >= start;
+      });
+    }
+    if (soDateEnd) {
+      const end = new Date(soDateEnd);
+      end.setHours(23, 59, 59, 999);
+      result = result.filter((o) => {
+        const d = new Date(o.soCreateDate);
+        return !isNaN(d.getTime()) && d <= end;
+      });
     }
 
     // Sorting
@@ -229,7 +259,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       });
     }
     return result;
-  }, [orders, search, sortBy, sortDir, statusFilter, plantFilter, customerFilter, materialFilter, salesOrderFilter, leadTimeMin, leadTimeMax, riskScoreMin, riskScoreMax]);
+  }, [orders, search, sortBy, sortDir, statusFilter, plantFilter, customerFilter, materialFilter, salesOrderFilter, leadTimeMin, leadTimeMax, riskScoreMin, riskScoreMax, soDateStart, soDateEnd]);
 
   // Reset page when filters change
   useMemo(() => setPage(1), [filtered.length]);
@@ -404,6 +434,12 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="mr-1.5 h-3.5 w-3.5" /> Export
           </Button>
+
+
+
+          <Button variant="ghost" size="sm" onClick={clearAllFilters} title="Clear all filters">
+            <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Clear Filters
+          </Button>
         </div>
       </div>
 
@@ -470,8 +506,8 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                       {isLeadTime && (
                         <ColumnFilterRange
                           label="Lead Time"
-                          min={leadTimeBounds.min}
-                          max={leadTimeBounds.max}
+                          min={0}
+                          max={30}
                           currentMin={leadTimeMin}
                           currentMax={leadTimeMax}
                           onChange={(min, max) => { setLeadTimeMin(min); setLeadTimeMax(max); }}
@@ -491,6 +527,14 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                       )}
                       {isStatus && (
                         <ColumnFilterCheckbox label="Status" options={uniqueStatuses} selected={statusFilter} onChange={setStatusFilter} />
+                      )}
+                      {(key === "so create date" || key === "so_create_date") && (
+                        <ColumnFilterDate
+                          label="SO Creation Date"
+                          currentStart={soDateStart}
+                          currentEnd={soDateEnd}
+                          onChange={(start, end) => { setSoDateStart(start); setSoDateEnd(end); }}
+                        />
                       )}
                     </div>
                   </th>

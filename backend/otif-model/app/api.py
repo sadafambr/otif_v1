@@ -29,7 +29,7 @@ _bcrypt_mod.checkpw = _patched_checkpw
 
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.security import OAuth2PasswordRequestForm
+from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
@@ -54,6 +54,10 @@ try:
 except Exception as _exc:
     _genai_summarize_reason = None
     _genai_import_error = str(_exc)
+
+# --- Daily in-memory cache for GenAI order summaries ---
+# Key: salesOrder str → Value: (date_str, genai_summary, shap_one_liner)
+_summary_cache: dict[str, tuple[str, Optional[str], Optional[str]]] = {}
 
 
 # Absolute path: backend/users.db  (one level above the app/ package)
@@ -80,6 +84,15 @@ class User(Base):
     email = Column(String, unique=True, index=True, nullable=False)
     hashed_password = Column(String, nullable=False)
     role = Column(String, nullable=False, default="user")  # "admin" or "user"
+
+
+class FavoriteFilter(Base):
+    __tablename__ = "favorite_filters"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, index=True, nullable=False)
+    name = Column(String, nullable=False)
+    filter_state = Column(String, nullable=False)  # Stored as JSON string
 
 
 Base.metadata.create_all(bind=engine)
@@ -133,6 +146,21 @@ class TokenData(BaseModel):
     sub: Optional[str] = None
 
 
+class FavoriteFilterCreate(BaseModel):
+    name: str
+    filter_state: str
+
+
+class FavoriteFilterOut(BaseModel):
+    id: int
+    user_id: int
+    name: str
+    filter_state: str
+
+    class Config:
+        from_attributes = True
+
+
 class OrderSummaryRequest(BaseModel):
     salesOrder: str
     customer: str
@@ -144,6 +172,16 @@ class OrderSummaryRequest(BaseModel):
     probHit: Optional[float] = None
     probMiss: Optional[float] = None
     status: str
+    # Per-row SHAP top features from model output
+    top1Feature: Optional[str] = None
+    top1Value: Optional[str] = None
+    top1Shap: Optional[float] = None
+    top2Feature: Optional[str] = None
+    top2Value: Optional[str] = None
+    top2Shap: Optional[float] = None
+    top3Feature: Optional[str] = None
+    top3Value: Optional[str] = None
+    top3Shap: Optional[float] = None
 
 
 class RiskDriver(BaseModel):
@@ -178,9 +216,26 @@ def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
     return user
 
 
-def get_current_user(db: Session = Depends(get_db), token: str = Depends(OAuth2PasswordRequestForm)) -> User:
-    # This dependency is not used directly; we define explicit auth endpoints instead.
-    raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED)
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
+
+def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)) -> User:
+    credentials_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Could not validate credentials",
+        headers={"WWW-Authenticate": "Bearer"},
+    )
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credentials_exception
+        token_data = TokenData(sub=user_id)
+    except JWTError:
+        raise credentials_exception
+    user = db.query(User).filter(User.id == int(token_data.sub)).first()
+    if user is None:
+        raise credentials_exception
+    return user
 
 
 app = FastAPI(title="OTIF API")
@@ -237,6 +292,34 @@ def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depend
     return Token(access_token=access_token, user=user)  # type: ignore[arg-type]
 
 
+@app.get("/user/favorites", response_model=List[FavoriteFilterOut])
+def get_user_favorites(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    return db.query(FavoriteFilter).filter(FavoriteFilter.user_id == current_user.id).all()
+
+
+@app.post("/user/favorites", response_model=FavoriteFilterOut)
+def create_user_favorite(fav_in: FavoriteFilterCreate, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    db_fav = FavoriteFilter(
+        user_id=current_user.id,
+        name=fav_in.name,
+        filter_state=fav_in.filter_state
+    )
+    db.add(db_fav)
+    db.commit()
+    db.refresh(db_fav)
+    return db_fav
+
+
+@app.delete("/user/favorites/{fav_id}")
+def delete_user_favorite(fav_id: int, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    db_fav = db.query(FavoriteFilter).filter(FavoriteFilter.id == fav_id, FavoriteFilter.user_id == current_user.id).first()
+    if not db_fav:
+        raise HTTPException(status_code=404, detail="Favorite filter not found")
+    db.delete(db_fav)
+    db.commit()
+    return {"detail": "Successfully deleted"}
+
+
 def _compute_probabilities(req: OrderSummaryRequest) -> tuple[float, float]:
     if req.probHit is not None and req.probMiss is not None:
         return float(req.probHit), float(req.probMiss)
@@ -257,8 +340,88 @@ def _compute_probabilities(req: OrderSummaryRequest) -> tuple[float, float]:
     return 100.0, 0.0
 
 
+# Human-readable labels for SHAP feature names
+_SHAP_FEATURE_LABELS: dict[str, str] = {
+    "f_lead_gap_days": "Lead Time Gap",
+    "f_request_lead_days": "Request Lead Days",
+    "f_material_lead_days": "Material Lead Days",
+    "f_so_to_rdd_days": "SO to Delivery Days",
+    "f_so_to_mat_avail_days_from_dates": "SO to Material Avail Days",
+    "f_mat_avail_to_rdd_days": "Material Avail to Delivery Days",
+    "f_mat_ready_after_rdd": "Material Ready After Delivery",
+    "f_tight_ratio": "Lead Time Tightness Ratio",
+    "f_is_tight_order": "Tight Order Flag",
+    "f_is_extremely_tight": "Extremely Tight Order",
+    "f_customer_miss_rate": "Customer Miss Rate",
+    "f_material_miss_rate": "Material Miss Rate",
+    "f_plant_miss_rate": "Plant Miss Rate",
+    "f_plant_orders_7d": "Plant Orders (7 day)",
+    "f_plant_orders_30d": "Plant Orders (30 day)",
+    "f_risk_stack": "Risk Stack",
+    "f_otif_risk_score": "OTIF Risk Score",
+    "f_congestion": "Node Congestion",
+    "f_high_value_x_tight": "High Value x Tight Order",
+    "f_gap_x_load": "Gap x Load",
+}
+
+
+def _translate_feature_name(name: str) -> str:
+    """Turn a raw SHAP feature name into a human-readable label."""
+    key = name.strip().lower()
+    if key in _SHAP_FEATURE_LABELS:
+        return _SHAP_FEATURE_LABELS[key]
+    if f"f_{key}" in _SHAP_FEATURE_LABELS:
+        return _SHAP_FEATURE_LABELS[f"f_{key}"]
+    # Generic fallback: strip f_ prefix, replace underscores, title-case
+    return key.removeprefix("f_").replace("_", " ").title()
+
+
 def _generate_risk_drivers(req: OrderSummaryRequest, prob_miss: float) -> List[RiskDriver]:
-    drivers: List[RiskDriver] = []
+    """
+    Build risk drivers from real SHAP features when available.
+    Falls back to generic hardcoded drivers only when no SHAP data is present.
+    """
+    shap_features = []
+    for feat, val, shap_val in [
+        (req.top1Feature, req.top1Value, req.top1Shap),
+        (req.top2Feature, req.top2Value, req.top2Shap),
+        (req.top3Feature, req.top3Value, req.top3Shap),
+    ]:
+        if feat:
+            shap_features.append((feat, val, shap_val))
+
+    # If we have real SHAP features, use them
+    if shap_features:
+        drivers: List[RiskDriver] = []
+        max_abs_shap = max(
+            (abs(s) for _, _, s in shap_features if s is not None),
+            default=4.0,
+        ) or 1.0  # avoid division by zero
+
+        for rank, (feat, val, shap_val) in enumerate(shap_features, start=1):
+            abs_shap = abs(shap_val) if shap_val is not None else 0.0
+            human_name = _translate_feature_name(feat)
+            is_flag = abs_shap >= max_abs_shap * 0.8  # flag top-impact features
+
+            drivers.append(
+                RiskDriver(
+                    rank=rank,
+                    name=human_name,
+                    value=str(val) if val is not None else "N/A",
+                    description=f"SHAP feature: {feat}",
+                    shapValue=round(abs_shap, 4),
+                    maxShap=round(max_abs_shap, 4),
+                    explanation=(
+                        f"{human_name} has a SHAP impact of {shap_val:+.3f}, "
+                        f"{'increasing' if (shap_val or 0) > 0 else 'decreasing'} miss risk."
+                    ) if shap_val is not None else f"{human_name} is a key prediction driver.",
+                    flag=is_flag,
+                )
+            )
+        return drivers
+
+    # ---------- Fallback: no SHAP data ----------
+    drivers = []
     try:
         lead_days = int(req.leadTime)
     except Exception:
@@ -313,20 +476,31 @@ def _generate_risk_drivers(req: OrderSummaryRequest, prob_miss: float) -> List[R
 @app.post("/orders/summary", response_model=OrderSummaryResponse)
 def summarize_order(req: OrderSummaryRequest) -> OrderSummaryResponse:
     prob_hit, prob_miss = _compute_probabilities(req)
-    prediction = "Miss" if prob_miss >= prob_hit else "Hit"
+    # Priority: status from request, then derived from probabilities
+    prediction = req.status if req.status in ["Hit", "Miss"] else ("Miss" if prob_miss >= prob_hit else "Hit")
 
     explanation = (
-        f"This order has a {prob_miss:.1f}% predicted probability of missing OTIF "
-        f"and a {prob_hit:.1f}% probability of on-time delivery, based on the uploaded risk scores."
+        f"This order is predicted to be a {prediction.upper()} based on the uploaded dataset features. "
+        f"The assessed miss probability is {prob_miss:.1f}%."
     )
 
     drivers = _generate_risk_drivers(req, prob_miss)
 
-    # --- GenAI explanation (graceful fallback) ---
+    # --- GenAI explanation (with daily cache) ---
     genai_summary: Optional[str] = None
     shap_one_liner: Optional[str] = None
+    today_str = datetime.utcnow().strftime("%Y-%m-%d")
+    cache_key = req.salesOrder
 
-    if _genai_summarize_reason is not None:
+    # Check cache: reuse if generated today
+    if cache_key in _summary_cache:
+        cached_date, cached_summary, cached_shap = _summary_cache[cache_key]
+        if cached_date == today_str:
+            genai_summary = cached_summary
+            shap_one_liner = cached_shap
+
+    # If not cached, call GenAI
+    if genai_summary is None and _genai_summarize_reason is not None:
         try:
             row_data: dict[str, Any] = {
                 "Sales order": req.salesOrder,
@@ -337,6 +511,20 @@ def summarize_order(req: OrderSummaryRequest) -> OrderSummaryResponse:
                 "prob_hit": prob_hit,
                 "prob_miss": prob_miss,
             }
+            # Pass real SHAP features to the LLM prompt when available
+            if req.top1Feature:
+                row_data["top1_feature"] = req.top1Feature
+                row_data["top1_value"] = req.top1Value
+                row_data["top1_shap"] = req.top1Shap
+            if req.top2Feature:
+                row_data["top2_feature"] = req.top2Feature
+                row_data["top2_value"] = req.top2Value
+                row_data["top2_shap"] = req.top2Shap
+            if req.top3Feature:
+                row_data["top3_feature"] = req.top3Feature
+                row_data["top3_value"] = req.top3Value
+                row_data["top3_shap"] = req.top3Shap
+
             drv_tuples = [(d.name, d.value, d.shapValue) for d in drivers]
             pred_int = 1 if prediction == "Hit" else 0
 
@@ -347,6 +535,8 @@ def summarize_order(req: OrderSummaryRequest) -> OrderSummaryResponse:
                 drivers=drv_tuples,
                 row=row_data,
             )
+            # Store in cache
+            _summary_cache[cache_key] = (today_str, genai_summary, shap_one_liner)
         except Exception as exc:
             genai_summary = None
             shap_one_liner = f"GenAI unavailable: {exc}"
@@ -710,3 +900,121 @@ def admin_performance_curves(month: Optional[str] = None) -> dict:
         },
     }
 
+
+@app.post("/orders/enrich")
+async def enrich_orders(file: UploadFile = File(...)) -> dict:
+    """
+    Accepts a raw CSV/Excel file, runs the full model pipeline
+    (preprocess → feature engineering → predict → SHAP), and returns
+    per-row enriched data with probabilities and top SHAP features.
+    """
+    import shap
+    import numpy as np
+    from src.feature_engineering import run_inference_pipeline
+    from src.explainability import get_top_shap_features
+
+    config = di.load_config()
+    models_root = Path(config["paths"]["models"])
+
+    if not models_root.exists():
+        raise HTTPException(status_code=404, detail="No models directory found")
+
+    month_dirs = sorted([d.name for d in models_root.iterdir() if d.is_dir()])
+    if not month_dirs:
+        raise HTTPException(status_code=404, detail="No trained model months found")
+
+    selected_month = month_dirs[-1]
+    model, artifacts = tr.load_model_artifacts(selected_month, config)
+    if model is None or artifacts is None:
+        raise HTTPException(status_code=404, detail="Model artifacts not available")
+
+    # --- Parse uploaded file ---
+    contents = await file.read()
+    try:
+        if file.filename and file.filename.lower().endswith(".csv"):
+            from io import StringIO
+            df_input = pd.read_csv(StringIO(contents.decode("utf-8")))
+        else:
+            from io import BytesIO
+            df_input = pd.read_excel(BytesIO(contents))
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed to parse file: {e}")
+
+    if df_input.empty:
+        return {"rows": [], "month": selected_month}
+
+    # --- Preprocess + Feature Engineering ---
+    df_clean = pp.preprocess_data(df_input, config)
+    fe_art = artifacts["fe_artifacts"]
+    df_fe = run_inference_pipeline(df_clean, fe_art, config)
+
+    # Ensure all required feature columns exist (fill missing with 0)
+    feature_cols = artifacts["feature_cols"]
+    for col in feature_cols:
+        if col not in df_fe.columns:
+            df_fe[col] = 0.0
+
+    X_infer = df_fe[feature_cols]
+
+    # --- Model Prediction ---
+    probs_hit = model.predict_proba(X_infer)[:, 1]
+    thr = float(artifacts.get("threshold", 0.5))
+    y_pred = (probs_hit >= thr).astype(int)
+
+    # --- SHAP Explanation ---
+    try:
+        explainer = shap.TreeExplainer(model)
+        shap_values = explainer.shap_values(X_infer)
+        # For binary classification: use class-0 (MISS) SHAP for risk explanation
+        if isinstance(shap_values, list):
+            shap_miss = shap_values[0]
+        else:
+            shap_miss = -shap_values
+        top_shap_df = get_top_shap_features(shap_miss, X_infer, top_n=3)
+    except Exception:
+        # Graceful fallback if SHAP fails
+        top_shap_df = pd.DataFrame([{
+            "top1_feature": None, "top1_value": None, "top1_shap": None,
+            "top2_feature": None, "top2_value": None, "top2_shap": None,
+            "top3_feature": None, "top3_value": None, "top3_shap": None,
+        }] * len(X_infer))
+
+    # --- Build per-row response ---
+    # Use original df_input to get readable identifiers (before preprocessing mangling)
+    rows_out = []
+    for i in range(len(df_input)):
+        raw = df_input.iloc[i]
+        prob_hit_pct = round(float(probs_hit[i]) * 100, 2)
+        prob_miss_pct = round((1.0 - float(probs_hit[i])) * 100, 2)
+        prediction = "Hit" if y_pred[i] == 1 else "Miss"
+
+        # Safely extract SHAP top features
+        shap_row = top_shap_df.iloc[i] if i < len(top_shap_df) else {}
+        def _safe(val):
+            if val is None or (isinstance(val, float) and np.isnan(val)):
+                return None
+            return val
+
+        rows_out.append({
+            "rowIndex": i,
+            "probHit": prob_hit_pct,
+            "probMiss": prob_miss_pct,
+            "riskScore": prob_miss_pct,
+            "prediction": prediction,
+            "top1Feature": _safe(shap_row.get("top1_feature")),
+            "top1Value": str(_safe(shap_row.get("top1_value"))) if _safe(shap_row.get("top1_value")) is not None else None,
+            "top1Shap": round(float(shap_row.get("top1_shap", 0)), 4) if _safe(shap_row.get("top1_shap")) is not None else None,
+            "top2Feature": _safe(shap_row.get("top2_feature")),
+            "top2Value": str(_safe(shap_row.get("top2_value"))) if _safe(shap_row.get("top2_value")) is not None else None,
+            "top2Shap": round(float(shap_row.get("top2_shap", 0)), 4) if _safe(shap_row.get("top2_shap")) is not None else None,
+            "top3Feature": _safe(shap_row.get("top3_feature")),
+            "top3Value": str(_safe(shap_row.get("top3_value"))) if _safe(shap_row.get("top3_value")) is not None else None,
+            "top3Shap": round(float(shap_row.get("top3_shap", 0)), 4) if _safe(shap_row.get("top3_shap")) is not None else None,
+        })
+
+    return {
+        "month": selected_month,
+        "threshold": thr,
+        "totalOrders": len(rows_out),
+        "rows": rows_out,
+    }

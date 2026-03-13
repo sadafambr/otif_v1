@@ -15,6 +15,7 @@ export interface OTIFRecord {
   material: string;
   plant: string;
   reqDelivery: string;
+  soCreateDate: string;
   leadTime: string;
   riskScore: number;
   status: "Hit" | "Miss";
@@ -23,6 +24,16 @@ export interface OTIFRecord {
   probMiss?: number;
   /** SHAP-based risk signals extracted from CSV top features */
   riskSignals?: string;
+  /** Per-row SHAP top features from model output */
+  top1Feature?: string;
+  top1Value?: string;
+  top1Shap?: number;
+  top2Feature?: string;
+  top2Value?: string;
+  top2Shap?: number;
+  top3Feature?: string;
+  top3Value?: string;
+  top3Shap?: number;
   /** All raw CSV column values keyed by lowercase header name */
   rawData: Record<string, string>;
 }
@@ -73,6 +84,8 @@ export interface OrderFilters {
   statusFilter?: "Hit" | "Miss" | null;
   customers?: string[];
   plants?: string[];
+  soCreateDateStart?: string;
+  soCreateDateEnd?: string;
 }
 
 export interface PeriodFilter {

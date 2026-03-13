@@ -111,13 +111,14 @@ def generate_explanation(data):
         raise RuntimeError("OPENAI_API_KEY is not set. Set it in environment or otif-genai/.env.")
 
     response = client.chat.completions.create(
-        model="gpt-4o-mini",  
+        model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are an expert OTIF supply chain analyst."},
+            {"role": "system", "content": "You are an expert OTIF supply chain analyst. Be concise."},
             {"role": "user", "content": prompt}
         ],
         temperature=0.2,
-        max_tokens=150
+        max_tokens=150,
+        timeout=15.0  # Prevent "stuck" loading states
     )
 
     return response.choices[0].message.content

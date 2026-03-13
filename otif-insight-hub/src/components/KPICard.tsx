@@ -28,12 +28,12 @@ export function KPICard({ label, value, description, icon: Icon, variant = "defa
     <div className={cn("kpi-card animate-fade-in", variantStyles[variant])}>
       <div className="flex items-start justify-between">
         <div>
-          <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-          <p className="mt-1 text-3xl font-bold text-foreground">{value}</p>
-          <p className="mt-1 text-xs text-muted-foreground">{description}</p>
+          <p className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground/80">{label}</p>
+          <p className="mt-0.5 text-2xl font-bold tracking-tight text-foreground">{value}</p>
+          <p className="mt-0.5 text-[10px] text-muted-foreground/70 line-clamp-1">{description}</p>
         </div>
-        <div className={cn("rounded-full p-2", iconVariantStyles[variant])}>
-          <Icon className="h-5 w-5" />
+        <div className={cn("rounded-full p-1.5 bg-background/20 backdrop-blur-sm", iconVariantStyles[variant])}>
+          <Icon className="h-4 w-4" />
         </div>
       </div>
     </div>
