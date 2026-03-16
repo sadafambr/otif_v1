@@ -30,6 +30,7 @@ export default function Dashboard() {
   const countryDropdownRef = useRef<HTMLDivElement>(null);
   const [selectedOrder, setSelectedOrder] = useState<OTIFRecord | null>(null);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const { token } = useAuth();
   const [favorites, setFavorites] = useState<FavoriteFilter[]>([]);
@@ -128,6 +129,18 @@ export default function Dashboard() {
     a.download = "otif_dashboard_summary.csv";
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  const handleRefresh = async () => {
+    setIsRefreshing(true);
+    try {
+      await Promise.all([
+        refresh(),
+        new Promise((res) => setTimeout(res, 800)),
+      ]);
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const greeting = useMemo(() => {
@@ -247,8 +260,11 @@ export default function Dashboard() {
             <Button variant="outline" size="sm" onClick={handleExportSummary}>
               <Download className="mr-1.5 h-3.5 w-3.5" /> Export Summary
             </Button>
-            <Button variant="outline" size="sm" onClick={refresh}>
-              <RefreshCw className="mr-1.5 h-3.5 w-3.5" /> Refresh
+            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={isRefreshing}>
+              <RefreshCw
+                className={`mr-1.5 h-3.5 w-3.5 transition-transform ${isRefreshing ? "animate-spin" : ""}`}
+              />
+              Refresh
             </Button>
           </div>
         </div>
@@ -443,9 +459,9 @@ export default function Dashboard() {
         {/* KPI Cards */}
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KPICard label="Total Orders" value={filteredSummary?.totalOrders ?? summary.totalOrders} description="Orders evaluated" icon={Package} variant="default" />
-          <KPICard label="OTIF Miss" value={filteredSummary?.otifMiss ?? summary.otifMiss} description="Predicted to miss delivery" icon={XCircle} variant="risk" />
-          <KPICard label="OTIF Hit" value={filteredSummary?.otifHit ?? summary.otifHit} description="Predicted on-time delivery" icon={CheckCircle} variant="success" />
-          <KPICard label="Miss Rate" value={`${filteredSummary?.missRate ?? summary.missRate}%`} description="Orders predicted to miss" icon={TrendingDown} variant="info" />
+          <KPICard label="OTIF Miss Prediction" value={filteredSummary?.otifMiss ?? summary.otifMiss} description="Predicted to miss delivery" icon={XCircle} variant="risk" />
+          <KPICard label="OTIF Hit Prediction" value={filteredSummary?.otifHit ?? summary.otifHit} description="Predicted on-time delivery" icon={CheckCircle} variant="success" />
+          <KPICard label="Miss Rate Prediction" value={`${filteredSummary?.missRate ?? summary.missRate}%`} description="Orders predicted to miss" icon={TrendingDown} variant="info" />
         </div>
 
         {/* Chart */}

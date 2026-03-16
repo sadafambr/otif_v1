@@ -1,6 +1,6 @@
 import { useMemo, useState } from "react";
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell } from "recharts";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, LabelList, ResponsiveContainer, Cell } from "recharts";
+import { ChevronDown } from "lucide-react";
 import type { DashboardSummary } from "@/types/otif";
 
 interface OTIFChartProps {
@@ -41,17 +41,16 @@ export function OTIFChart({ summary }: OTIFChartProps) {
               <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(220, 13%, 91%)" />
               <XAxis type="number" tick={{ fontSize: 12, fill: "hsl(220, 10%, 50%)" }} />
               <YAxis type="category" dataKey="name" width={80} tick={{ fontSize: 13, fill: "hsl(220, 20%, 14%)" }} />
-              <Tooltip
-                contentStyle={{
-                  borderRadius: 8,
-                  border: "1px solid hsl(220, 13%, 91%)",
-                  fontSize: 13,
-                }}
-              />
-              <Bar dataKey="value" radius={[0, 6, 6, 0]}>
+              <Bar dataKey="value" radius={[0, 6, 6, 0]} isAnimationActive={false}>
                 {data.map((entry, index) => (
                   <Cell key={index} fill={entry.color} />
                 ))}
+                <LabelList
+                  dataKey="value"
+                  position="right"
+                  style={{ fontSize: 13, fontWeight: 600, fill: "hsl(220, 20%, 14%)" }}
+                  formatter={(v: number) => v.toLocaleString()}
+                />
               </Bar>
             </BarChart>
           </ResponsiveContainer>
