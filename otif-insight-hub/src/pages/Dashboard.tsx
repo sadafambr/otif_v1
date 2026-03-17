@@ -8,7 +8,7 @@ import { useDashboard, useOrderDetail } from "@/hooks/useOTIF";
 import { getDashboardData } from "@/lib/dataStore";
 import { fetchFavorites, saveFavorite, deleteFavorite, type FavoriteFilter } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
-import { Package, XCircle, CheckCircle, TrendingDown, RefreshCw, Calendar, MapPin, ChevronDown, Download, Star, Trash2, Save } from "lucide-react";
+import { Package, XCircle, CheckCircle, TrendingDown, Calendar, MapPin, Globe, ChevronDown, Download, Star, Trash2, Save } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import type { OTIFRecord, PeriodFilter } from "@/types/otif";
@@ -21,16 +21,23 @@ const periods: PeriodFilter[] = [
   { label: "> 30 Days", value: "over_30_days" },
 ];
 
+const regions = [
+  { label: "NAM", value: "NAM" },
+  { label: "EUR", value: "EUR" },
+  { label: "APAC", value: "APAC" },
+  { label: "LATAM", value: "LATAM" },
+] as const;
+
 export default function Dashboard() {
   const { summary, orders, loading, loadDashboard, refresh } = useDashboard();
   const { detail, loading: detailLoading, fetchDetail, setDetail } = useOrderDetail();
   const [selectedPeriod, setSelectedPeriod] = useState("all");
+  const [selectedRegion, setSelectedRegion] = useState<(typeof regions)[number]["value"]>("NAM");
   const [selectedCountry, setSelectedCountry] = useState("all");
   const [countryDropdownOpen, setCountryDropdownOpen] = useState(false);
   const countryDropdownRef = useRef<HTMLDivElement>(null);
   const [selectedOrder, setSelectedOrder] = useState<OTIFRecord | null>(null);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
-  const [isRefreshing, setIsRefreshing] = useState(false);
 
   const { token } = useAuth();
   const [favorites, setFavorites] = useState<FavoriteFilter[]>([]);
@@ -53,6 +60,14 @@ export default function Dashboard() {
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, []);
 
+  // If Region changes away from NAM, clear country filter (and close dropdown)
+  useEffect(() => {
+    if (selectedRegion !== "NAM") {
+      setSelectedCountry("all");
+      setCountryDropdownOpen(false);
+    }
+  }, [selectedRegion]);
+
   // Load data from in-memory store
   useEffect(() => {
     const { records, rawHeaders } = getDashboardData();
@@ -73,7 +88,7 @@ export default function Dashboard() {
   const handleSaveFavorite = async () => {
     if (!token || !newFavName.trim()) return;
     try {
-      const state = JSON.stringify({ selectedPeriod, selectedCountry });
+      const state = JSON.stringify({ selectedPeriod, selectedRegion, selectedCountry });
       const saved = await saveFavorite(token, newFavName.trim(), state);
       setFavorites((prev) => [...prev, saved]);
       setNewFavName("");
@@ -98,6 +113,7 @@ export default function Dashboard() {
     try {
       const state = JSON.parse(fav.filter_state);
       if (state.selectedPeriod) setSelectedPeriod(state.selectedPeriod);
+      if (state.selectedRegion) setSelectedRegion(state.selectedRegion);
       if (state.selectedCountry) setSelectedCountry(state.selectedCountry);
     } catch (err) {
       console.error("Failed to parse favorite state", err);
@@ -119,7 +135,8 @@ export default function Dashboard() {
       "Miss Rate": `${filteredSummary?.missRate ?? summary.missRate}%`,
       "Timestamp": new Date(summary.lastUpdated).toISOString(),
       "Req. Delivery Date": selectedPeriod,
-      "Region": selectedCountry
+      "Region": selectedRegion,
+      "Countries": selectedCountry
     };
     const csvContent = Object.entries(data).map(([k, v]) => `${k},"${v}"`).join("\n");
     const blob = new Blob([csvContent], { type: "text/csv" });
@@ -129,18 +146,6 @@ export default function Dashboard() {
     a.download = "otif_dashboard_summary.csv";
     a.click();
     URL.revokeObjectURL(url);
-  };
-
-  const handleRefresh = async () => {
-    setIsRefreshing(true);
-    try {
-      await Promise.all([
-        refresh(),
-        new Promise((res) => setTimeout(res, 800)),
-      ]);
-    } finally {
-      setIsRefreshing(false);
-    }
   };
 
   const greeting = useMemo(() => {
@@ -205,15 +210,15 @@ export default function Dashboard() {
     return orders.filter((o) => {
       if (!isInPeriod(o.reqDelivery)) return false;
 
-      // Region filter
-      if (selectedCountry !== "all") {
+      // Countries filter (only under NAM)
+      if (selectedRegion === "NAM" && selectedCountry !== "all") {
         const country = (o.rawData["country"] || "").trim();
         if (country !== selectedCountry) return false;
       }
 
       return true;
     });
-  }, [orders, selectedPeriod, selectedCountry]);
+  }, [orders, selectedPeriod, selectedRegion, selectedCountry]);
 
   const filteredSummary = useMemo(() => {
     if (!summary || filteredOrders.length === 0) return summary;
@@ -260,12 +265,6 @@ export default function Dashboard() {
             <Button variant="outline" size="sm" onClick={handleExportSummary}>
               <Download className="mr-1.5 h-3.5 w-3.5" /> Export Summary
             </Button>
-            <Button variant="outline" size="sm" onClick={handleRefresh} disabled={isRefreshing}>
-              <RefreshCw
-                className={`mr-1.5 h-3.5 w-3.5 transition-transform ${isRefreshing ? "animate-spin" : ""}`}
-              />
-              Refresh
-            </Button>
           </div>
         </div>
 
@@ -280,7 +279,7 @@ export default function Dashboard() {
             <div className="flex items-center gap-2">
               <div className="flex -space-x-1">
                 <Calendar className="h-4 w-4 text-muted-foreground" />
-                <MapPin className="h-4 w-4 text-muted-foreground" />
+                <Globe className="h-4 w-4 text-muted-foreground" />
               </div>
               <span className="text-sm font-semibold text-foreground">Active Filters</span>
               {!filtersExpanded && (
@@ -289,8 +288,13 @@ export default function Dashboard() {
                     {selectedPeriod === "all" ? "All Time" : periods.find(p => p.value === selectedPeriod)?.label}
                   </span>
                   <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                    {selectedCountry === "all" ? "All Regions" : selectedCountry}
+                    {selectedRegion}
                   </span>
+                  {selectedRegion === "NAM" && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+                      {selectedCountry === "all" ? "All Countries" : selectedCountry}
+                    </span>
+                  )}
                 </div>
               )}
             </div>
@@ -321,15 +325,35 @@ export default function Dashboard() {
               </div>
 
               {/* Divider */}
-              {countriesWithCounts.length > 0 && (
+              <div className="h-8 w-px bg-border hidden sm:block" />
+
+              {/* Region filter */}
+              <div className="flex items-center gap-2">
+                <Globe className="h-4 w-4 text-muted-foreground" />
+                <span className="mr-1 text-sm font-medium text-muted-foreground">Region</span>
+                <div className="flex items-center gap-1.5">
+                  {regions.map((r) => (
+                    <button
+                      key={r.value}
+                      onClick={(e) => { e.stopPropagation(); setSelectedRegion(r.value); }}
+                      className={selectedRegion === r.value ? "filter-chip-active" : "filter-chip-inactive"}
+                    >
+                      {r.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Divider */}
+              {selectedRegion === "NAM" && countriesWithCounts.length > 0 && (
                 <div className="h-8 w-px bg-border hidden sm:block" />
               )}
 
-              {/* Region filter */}
-              {countriesWithCounts.length > 0 && (
+              {/* Countries filter */}
+              {selectedRegion === "NAM" && countriesWithCounts.length > 0 && (
                 <div className="flex items-center gap-2">
                   <MapPin className="h-4 w-4 text-muted-foreground" />
-                  <span className="mr-1 text-sm font-medium text-muted-foreground">Region</span>
+                  <span className="mr-1 text-sm font-medium text-muted-foreground">Countries</span>
                   <div className="relative" ref={countryDropdownRef}>
                     <button
                       id="filter-country"

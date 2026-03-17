@@ -125,6 +125,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   const [customerFilter, setCustomerFilter] = useState<Set<string>>(new Set());
   const [materialFilter, setMaterialFilter] = useState<Set<string>>(new Set());
   const [salesOrderFilter, setSalesOrderFilter] = useState<Set<string>>(new Set());
+  const [businessUnitFilter, setBusinessUnitFilter] = useState<Set<string>>(new Set());
   const [leadTimeMin, setLeadTimeMin] = useState<number | undefined>(undefined);
   const [leadTimeMax, setLeadTimeMax] = useState<number | undefined>(undefined);
   const [riskScoreMin, setRiskScoreMin] = useState<number | undefined>(undefined);
@@ -139,6 +140,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     setCustomerFilter(new Set());
     setMaterialFilter(new Set());
     setSalesOrderFilter(new Set());
+    setBusinessUnitFilter(new Set());
     setLeadTimeMin(undefined);
     setLeadTimeMax(undefined);
     setRiskScoreMin(undefined);
@@ -154,6 +156,10 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   const uniqueMaterials = useMemo(() => [...new Set(orders.map((o) => o.material).filter(Boolean))].sort(), [orders]);
   const uniqueSalesOrders = useMemo(() => [...new Set(orders.map((o) => o.salesOrder).filter(Boolean))].sort(), [orders]);
   const uniqueStatuses = useMemo(() => [...new Set(orders.map((o) => o.status).filter(Boolean))].sort(), [orders]);
+  const uniqueBusinessUnits = useMemo(() => {
+    const key = "division of business name";
+    return [...new Set(orders.map((o) => (o.rawData?.[key] ?? "").trim()).filter(Boolean))].sort();
+  }, [orders]);
 
   // Compute risk score bounds
   const riskScoreBounds = useMemo(() => {
@@ -204,6 +210,13 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     }
     if (salesOrderFilter.size > 0) {
       result = result.filter((o) => salesOrderFilter.has(o.salesOrder));
+    }
+    if (businessUnitFilter.size > 0) {
+      const key = "division of business name";
+      result = result.filter((o) => {
+        const bu = (o.rawData?.[key] ?? "").trim();
+        return businessUnitFilter.has(bu);
+      });
     }
 
     // Column filters: range filters
@@ -259,7 +272,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       });
     }
     return result;
-  }, [orders, search, sortBy, sortDir, statusFilter, plantFilter, customerFilter, materialFilter, salesOrderFilter, leadTimeMin, leadTimeMax, riskScoreMin, riskScoreMax, soDateStart, soDateEnd]);
+  }, [orders, search, sortBy, sortDir, statusFilter, plantFilter, customerFilter, materialFilter, salesOrderFilter, businessUnitFilter, leadTimeMin, leadTimeMax, riskScoreMin, riskScoreMax, soDateStart, soDateEnd]);
 
   // Reset page when filters change
   useMemo(() => setPage(1), [filtered.length]);
@@ -458,14 +471,15 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
         </p>
       </div>
 
-      <div className="overflow-auto px-6 h-[500px] relative">
-        <table className="w-full text-sm text-left border-separate border-spacing-0">
+      <div className="px-6 h-[500px] relative overflow-x-auto overflow-y-auto">
+        <table className="min-w-max w-full text-sm text-left border-collapse">
           <thead>
             <tr>
               {visibleColumnKeys.map((key) => {
                 const label = getColumnDisplayName(key);
                 const isSalesOrder = key === "sales order" || key === "sales_order";
                 const isCustomer = key === "customer name" || key === "customer" || key === "customer_name";
+                const isBusinessUnits = key === "division of business name";
                 const isMaterial = key === "material";
                 const isPlant = key === "plant";
                 const isReqDelivery = key === "requested delivery date" || key === "req_delivery" || key === "requested_delivery_date";
@@ -475,7 +489,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                 const sortKey: SortKey | null =
                   isSalesOrder ? "salesOrder" : isCustomer ? "customer" : isMaterial ? "material" : isPlant ? "plant" : isReqDelivery ? "reqDelivery" : isRiskScore ? "riskScore" : isStatus ? "status" : null;
                 return (
-                  <th key={key} className="sticky top-0 z-10 bg-card pb-3 pt-3 pr-4 text-left shadow-[inset_0_-1px_0_hsl(var(--border))]">
+                  <th key={key} className="sticky top-0 z-10 bg-card pb-3 pt-3 pr-4 text-left border-b border-border/70">
                     <div className="flex items-center gap-0.5">
                       {sortKey ? (
                         <button
@@ -496,6 +510,9 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                       )}
                       {isCustomer && (
                         <ColumnFilterCheckbox label="Customer" options={uniqueCustomers} selected={customerFilter} onChange={setCustomerFilter} />
+                      )}
+                      {isBusinessUnits && (
+                        <ColumnFilterCheckbox label="Business Units" options={uniqueBusinessUnits} selected={businessUnitFilter} onChange={setBusinessUnitFilter} />
                       )}
                       {isMaterial && (
                         <ColumnFilterCheckbox label="Material" options={uniqueMaterials} selected={materialFilter} onChange={setMaterialFilter} />
@@ -546,7 +563,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
             {pageOrders.map((o) => (
               <tr
                 key={o.salesOrder + o.rowNum}
-                className="cursor-pointer border-b border-border/50 hover:bg-muted/30 transition-colors"
+                className="cursor-pointer hover:bg-muted/30 transition-colors"
                 onClick={() => onOrderClick(o)}
               >
                 {visibleColumnKeys.map((key) => {
@@ -557,7 +574,11 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                   return (
                     <td
                       key={key}
-                      className={`py-3.5 pr-4 text-left ${isSalesOrder ? "font-medium text-primary" : ""} ${key === "riskSignals" ? "max-w-[200px] text-xs text-muted-foreground align-top" : ""}`}
+                      className={`py-3.5 pr-4 text-left border-b border-border/60 align-top ${
+                        isSalesOrder ? "font-medium text-primary" : ""
+                      } ${
+                        key === "riskSignals" ? "max-w-[260px] text-xs text-muted-foreground" : "whitespace-nowrap"
+                      }`}
                     >
                       {isStatus && typeof val === "string" && (val === "Hit" || val === "Miss") ? (
                         <span className={`${val === "Hit" ? "status-hit" : "status-miss"} inline-flex items-center justify-center whitespace-nowrap`}>
