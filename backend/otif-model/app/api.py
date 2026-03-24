@@ -27,9 +27,14 @@ _bcrypt_mod.hashpw = _patched_hashpw
 _bcrypt_mod.checkpw = _patched_checkpw
 # --- end shim ---
 
-from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File
+import uuid
+from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordRequestForm, OAuth2PasswordBearer
+
+from app.logger import get_logger
+logger = get_logger(__name__)
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 from pydantic import BaseModel, EmailStr
@@ -65,7 +70,8 @@ _APP_DIR = Path(__file__).resolve().parent          # …/backend/otif-model/app
 _BACKEND_DIR = _APP_DIR.parent.parent               # …/backend
 _DB_PATH = _BACKEND_DIR / "users.db"
 DATABASE_URL = f"sqlite:///{_DB_PATH}"
-SECRET_KEY = "change-this-secret-key"  # TODO: move to env in production
+import os
+SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key-but-really-change-it")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24
 
@@ -248,8 +254,6 @@ app.add_middleware(
         "http://localhost:8080",
         "http://127.0.0.1:8080",
     ],
-    # Accept any localhost/private-LAN dev port (Vite may shift ports).
-    # Keep explicit allow_origins for clarity; regex covers port changes.
     allow_origin_regex=r"^https?://("
     r"localhost|127\.0\.0\.1|0\.0\.0\.0|"
     r"10\.\d{1,3}\.\d{1,3}\.\d{1,3}|"
@@ -260,6 +264,23 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+@app.middleware("http")
+async def add_request_id_and_log(request: Request, call_next):
+    request_id = str(uuid.uuid4())
+    logger.info("Incoming request", extra={"request_id": request_id, "method": request.method, "url": str(request.url)})
+    response = await call_next(request)
+    logger.info("Request completed", extra={"request_id": request_id, "status_code": response.status_code})
+    response.headers["X-Request-ID"] = request_id
+    return response
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    logger.error("Unhandled exception processing request", exc_info=exc, extra={"url": str(request.url)})
+    return JSONResponse(
+        status_code=500,
+        content={"detail": "Internal Server Error. Please trace the logs for more info."}
+    )
 
 
 @app.post("/auth/register", response_model=UserOut)
@@ -669,6 +690,8 @@ def admin_shap_summary(month: Optional[str] = None) -> dict:
     }
 
 
+import asyncio
+
 @app.post("/admin/custom-predict")
 async def admin_custom_predict(file: UploadFile = File(...)) -> dict:
     """
@@ -690,54 +713,51 @@ async def admin_custom_predict(file: UploadFile = File(...)) -> dict:
     try:
         if file.filename and file.filename.lower().endswith(".csv"):
             from io import StringIO
-
             df_input = pd.read_csv(StringIO(contents.decode("utf-8")))
         else:
             from io import BytesIO
-
             df_input = pd.read_excel(BytesIO(contents))
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"Failed to parse file: {e}")
 
-    df_clean = pp.preprocess_data(df_input, config)
-    fe_art = artifacts["fe_artifacts"]
-
-    from src.feature_engineering import (
-        add_safe_features,
-        apply_miss_rate_maps,
-        apply_rate_map,
-        add_order_complexity_features,
-        add_tolerance_risk_features,
-        add_interaction_stack_features,
-    )
-
-    df_fe = add_safe_features(df_clean)
-    df_fe = apply_miss_rate_maps(df_fe, fe_art["global_miss"], fe_art["maps"])
-    if "state_map" in fe_art:
-        df_fe = apply_rate_map(
-            df_fe, "State - Province", "f_state_miss_rate", fe_art.get("g_state", 0.2), fe_art["state_map"]
+    def _process_data():
+        df_clean = pp.preprocess_data(df_input, config)
+        fe_art = artifacts["fe_artifacts"]
+        from src.feature_engineering import (
+            add_safe_features, apply_miss_rate_maps, apply_rate_map,
+            add_order_complexity_features, add_tolerance_risk_features,
+            add_interaction_stack_features
         )
-    df_fe["f_mat_total_orders_log"] = 0.0
-    df_fe = add_order_complexity_features(df_fe, fe_art["thresholds"])
-    df_fe = add_tolerance_risk_features(df_fe, "Overdeliv_Tolerance_OTIF", "Underdel_Tolerance_OTIF")
-    df_fe = add_interaction_stack_features(df_fe)
+        df_fe = add_safe_features(df_clean)
+        df_fe = apply_miss_rate_maps(df_fe, fe_art["global_miss"], fe_art["maps"])
+        if "state_map" in fe_art:
+            df_fe = apply_rate_map(
+                df_fe, "State - Province", "f_state_miss_rate", fe_art.get("g_state", 0.2), fe_art["state_map"]
+            )
+        df_fe["f_mat_total_orders_log"] = 0.0
+        df_fe = add_order_complexity_features(df_fe, fe_art["thresholds"])
+        df_fe = add_tolerance_risk_features(df_fe, "Overdeliv_Tolerance_OTIF", "Underdel_Tolerance_OTIF")
+        df_fe = add_interaction_stack_features(df_fe)
 
-    if "imputation" in fe_art:
-        for col, val in fe_art["imputation"].items():
-            if col not in df_fe.columns:
-                df_fe[col] = val
-            else:
-                df_fe[col] = df_fe[col].fillna(val)
+        if "imputation" in fe_art:
+            for col, val in fe_art["imputation"].items():
+                if col not in df_fe.columns:
+                    df_fe[col] = val
+                else:
+                    df_fe[col] = df_fe[col].fillna(val)
 
-    X_infer = df_fe[artifacts["feature_cols"]]
-    probs_hit = model.predict_proba(X_infer)[:, 1]
-    thr = float(artifacts.get("threshold", 0.5))
-    y_pred = (probs_hit >= thr).astype(int)
+        X_infer = df_fe[artifacts["feature_cols"]]
+        probs_hit = model.predict_proba(X_infer)[:, 1]
+        thr = float(artifacts.get("threshold", 0.5))
+        y_pred = (probs_hit >= thr).astype(int)
 
-    total = int(len(y_pred))
-    miss_count = int((y_pred == 0).sum())
-    hit_count = int((y_pred == 1).sum())
-    miss_rate = (miss_count / total * 100.0) if total > 0 else 0.0
+        total_rows = int(len(y_pred))
+        m_count = int((y_pred == 0).sum())
+        h_count = int((y_pred == 1).sum())
+        m_rate = (m_count / total_rows * 100.0) if total_rows > 0 else 0.0
+        return total_rows, m_count, h_count, m_rate
+
+    total, miss_count, hit_count, miss_rate = await asyncio.to_thread(_process_data)
 
     return {
         "month": selected_month,
@@ -941,76 +961,75 @@ async def enrich_orders(file: UploadFile = File(...)) -> dict:
         raise HTTPException(status_code=400, detail=f"Failed to parse file: {e}")
 
     if df_input.empty:
-        return {"rows": [], "month": selected_month}
+        return {
+            "month": selected_month,
+            "threshold": float(artifacts.get("threshold", 0.5)),
+            "totalOrders": 0,
+            "rows": []
+        }
 
-    # --- Preprocess + Feature Engineering ---
-    df_clean = pp.preprocess_data(df_input, config)
-    fe_art = artifacts["fe_artifacts"]
-    df_fe = run_inference_pipeline(df_clean, fe_art, config)
+    def _process_data():
+        df_clean = pp.preprocess_data(df_input, config)
+        fe_art = artifacts["fe_artifacts"]
+        df_fe = run_inference_pipeline(df_clean, fe_art, config)
 
-    # Ensure all required feature columns exist (fill missing with 0)
-    feature_cols = artifacts["feature_cols"]
-    for col in feature_cols:
-        if col not in df_fe.columns:
-            df_fe[col] = 0.0
+        feature_cols = artifacts["feature_cols"]
+        for col in feature_cols:
+            if col not in df_fe.columns:
+                df_fe[col] = 0.0
 
-    X_infer = df_fe[feature_cols]
+        X_infer = df_fe[feature_cols]
 
-    # --- Model Prediction ---
-    probs_hit = model.predict_proba(X_infer)[:, 1]
-    thr = float(artifacts.get("threshold", 0.5))
-    y_pred = (probs_hit >= thr).astype(int)
+        probs_hit = model.predict_proba(X_infer)[:, 1]
+        thr = float(artifacts.get("threshold", 0.5))
+        y_pred = (probs_hit >= thr).astype(int)
 
-    # --- SHAP Explanation ---
-    try:
-        explainer = shap.TreeExplainer(model)
-        shap_values = explainer.shap_values(X_infer)
-        # For binary classification: use class-0 (MISS) SHAP for risk explanation
-        if isinstance(shap_values, list):
-            shap_miss = shap_values[0]
-        else:
-            shap_miss = -shap_values
-        top_shap_df = get_top_shap_features(shap_miss, X_infer, top_n=3)
-    except Exception:
-        # Graceful fallback if SHAP fails
-        top_shap_df = pd.DataFrame([{
-            "top1_feature": None, "top1_value": None, "top1_shap": None,
-            "top2_feature": None, "top2_value": None, "top2_shap": None,
-            "top3_feature": None, "top3_value": None, "top3_shap": None,
-        }] * len(X_infer))
+        try:
+            explainer = shap.TreeExplainer(model)
+            shap_values = explainer.shap_values(X_infer)
+            if isinstance(shap_values, list):
+                shap_miss = shap_values[0]
+            else:
+                shap_miss = -shap_values
+            top_shap_df = get_top_shap_features(shap_miss, X_infer, top_n=3)
+        except Exception:
+            top_shap_df = pd.DataFrame([{
+                "top1_feature": None, "top1_value": None, "top1_shap": None,
+                "top2_feature": None, "top2_value": None, "top2_shap": None,
+                "top3_feature": None, "top3_value": None, "top3_shap": None,
+            }] * len(X_infer))
 
-    # --- Build per-row response ---
-    # Use original df_input to get readable identifiers (before preprocessing mangling)
-    rows_out = []
-    for i in range(len(df_input)):
-        raw = df_input.iloc[i]
-        prob_hit_pct = round(float(probs_hit[i]) * 100, 2)
-        prob_miss_pct = round((1.0 - float(probs_hit[i])) * 100, 2)
-        prediction = "Hit" if y_pred[i] == 1 else "Miss"
+        rows_out = []
+        for i in range(len(df_input)):
+            prob_hit_pct = round(float(probs_hit[i]) * 100, 2)
+            prob_miss_pct = round((1.0 - float(probs_hit[i])) * 100, 2)
+            prediction = "Hit" if y_pred[i] == 1 else "Miss"
 
-        # Safely extract SHAP top features
-        shap_row = top_shap_df.iloc[i] if i < len(top_shap_df) else {}
-        def _safe(val):
-            if val is None or (isinstance(val, float) and np.isnan(val)):
-                return None
-            return val
+            shap_row = top_shap_df.iloc[i] if i < len(top_shap_df) else {}
+            def _safe(val):
+                if val is None or (isinstance(val, float) and np.isnan(val)):
+                    return None
+                return val
 
-        rows_out.append({
-            "rowIndex": i,
-            "probHit": prob_hit_pct,
-            "probMiss": prob_miss_pct,
-            "riskScore": prob_miss_pct,
-            "prediction": prediction,
-            "top1Feature": _safe(shap_row.get("top1_feature")),
-            "top1Value": str(_safe(shap_row.get("top1_value"))) if _safe(shap_row.get("top1_value")) is not None else None,
-            "top1Shap": round(float(shap_row.get("top1_shap", 0)), 4) if _safe(shap_row.get("top1_shap")) is not None else None,
-            "top2Feature": _safe(shap_row.get("top2_feature")),
-            "top2Value": str(_safe(shap_row.get("top2_value"))) if _safe(shap_row.get("top2_value")) is not None else None,
-            "top2Shap": round(float(shap_row.get("top2_shap", 0)), 4) if _safe(shap_row.get("top2_shap")) is not None else None,
-            "top3Feature": _safe(shap_row.get("top3_feature")),
-            "top3Value": str(_safe(shap_row.get("top3_value"))) if _safe(shap_row.get("top3_value")) is not None else None,
-            "top3Shap": round(float(shap_row.get("top3_shap", 0)), 4) if _safe(shap_row.get("top3_shap")) is not None else None,
-        })
+            rows_out.append({
+                "rowIndex": i,
+                "probHit": prob_hit_pct,
+                "probMiss": prob_miss_pct,
+                "riskScore": prob_miss_pct,
+                "prediction": prediction,
+                "top1Feature": _safe(shap_row.get("top1_feature")),
+                "top1Value": str(_safe(shap_row.get("top1_value"))) if _safe(shap_row.get("top1_value")) is not None else None,
+                "top1Shap": round(float(shap_row.get("top1_shap", 0)), 4) if _safe(shap_row.get("top1_shap")) is not None else None,
+                "top2Feature": _safe(shap_row.get("top2_feature")),
+                "top2Value": str(_safe(shap_row.get("top2_value"))) if _safe(shap_row.get("top2_value")) is not None else None,
+                "top2Shap": round(float(shap_row.get("top2_shap", 0)), 4) if _safe(shap_row.get("top2_shap")) is not None else None,
+                "top3Feature": _safe(shap_row.get("top3_feature")),
+                "top3Value": str(_safe(shap_row.get("top3_value"))) if _safe(shap_row.get("top3_value")) is not None else None,
+                "top3Shap": round(float(shap_row.get("top3_shap", 0)), 4) if _safe(shap_row.get("top3_shap")) is not None else None,
+            })
+        return rows_out, thr
+
+    rows_out, thr = await asyncio.to_thread(_process_data)
 
     return {
         "month": selected_month,

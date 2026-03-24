@@ -32,6 +32,7 @@ export default function Dashboard() {
   const { summary, orders, loading, loadDashboard, refresh } = useDashboard();
   const { detail, loading: detailLoading, fetchDetail, setDetail } = useOrderDetail();
   const [selectedPeriod, setSelectedPeriod] = useState("all");
+  const [selectedCreationPeriod, setSelectedCreationPeriod] = useState("all");
   const [selectedRegion, setSelectedRegion] = useState<(typeof regions)[number]["value"]>("NAM");
   const [selectedCountry, setSelectedCountry] = useState("all");
   const [countryDropdownOpen, setCountryDropdownOpen] = useState(false);
@@ -88,7 +89,7 @@ export default function Dashboard() {
   const handleSaveFavorite = async () => {
     if (!token || !newFavName.trim()) return;
     try {
-      const state = JSON.stringify({ selectedPeriod, selectedRegion, selectedCountry });
+      const state = JSON.stringify({ selectedPeriod, selectedCreationPeriod, selectedRegion, selectedCountry });
       const saved = await saveFavorite(token, newFavName.trim(), state);
       setFavorites((prev) => [...prev, saved]);
       setNewFavName("");
@@ -113,6 +114,7 @@ export default function Dashboard() {
     try {
       const state = JSON.parse(fav.filter_state);
       if (state.selectedPeriod) setSelectedPeriod(state.selectedPeriod);
+      if (state.selectedCreationPeriod) setSelectedCreationPeriod(state.selectedCreationPeriod);
       if (state.selectedRegion) setSelectedRegion(state.selectedRegion);
       if (state.selectedCountry) setSelectedCountry(state.selectedCountry);
     } catch (err) {
@@ -135,6 +137,7 @@ export default function Dashboard() {
       "Miss Rate": `${filteredSummary?.missRate ?? summary.missRate}%`,
       "Timestamp": new Date(summary.lastUpdated).toISOString(),
       "Req. Delivery Date": selectedPeriod,
+      "SO Create Date": selectedCreationPeriod,
       "Region": selectedRegion,
       "Countries": selectedCountry
     };
@@ -174,12 +177,12 @@ export default function Dashboard() {
     const now = new Date();
     const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
-    const isInPeriod = (reqDelivery: string) => {
-      if (selectedPeriod === "all") return true;
-      const date = new Date(reqDelivery);
+    const isInPeriod = (dateString: string, periodType: string) => {
+      if (periodType === "all") return true;
+      const date = new Date(dateString);
       if (Number.isNaN(date.getTime())) return true;
 
-      switch (selectedPeriod) {
+      switch (periodType) {
         case "today": {
           return (
             date.getFullYear() === startOfToday.getFullYear() &&
@@ -208,7 +211,8 @@ export default function Dashboard() {
     };
 
     return orders.filter((o) => {
-      if (!isInPeriod(o.reqDelivery)) return false;
+      if (!isInPeriod(o.reqDelivery, selectedPeriod)) return false;
+      if (!isInPeriod(o.soCreateDate, selectedCreationPeriod)) return false;
 
       // Countries filter (only under NAM)
       if (selectedRegion === "NAM" && selectedCountry !== "all") {
@@ -218,7 +222,7 @@ export default function Dashboard() {
 
       return true;
     });
-  }, [orders, selectedPeriod, selectedRegion, selectedCountry]);
+  }, [orders, selectedPeriod, selectedCreationPeriod, selectedRegion, selectedCountry]);
 
   const filteredSummary = useMemo(() => {
     if (!summary || filteredOrders.length === 0) return summary;
@@ -287,6 +291,11 @@ export default function Dashboard() {
                   <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
                     {selectedPeriod === "all" ? "All Time" : periods.find(p => p.value === selectedPeriod)?.label}
                   </span>
+                  {selectedCreationPeriod !== "all" && (
+                    <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+                      Created: {periods.find(p => p.value === selectedCreationPeriod)?.label}
+                    </span>
+                  )}
                   <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
                     {selectedRegion}
                   </span>
@@ -306,31 +315,53 @@ export default function Dashboard() {
           </button>
           
           {filtersExpanded && (
-            <div className="flex flex-wrap items-center gap-x-8 gap-y-4 border-t p-4 animate-in fade-in slide-in-from-top-1 duration-200">
-              {/* Requested Delivery Date filters */}
-              <div className="flex items-center gap-2">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
-                <span className="mr-1 text-sm font-medium text-muted-foreground">Req. Delivery Date</span>
+            <div className="flex flex-col gap-y-4 border-t p-4 animate-in fade-in slide-in-from-top-1 duration-200">
+              {/* Date Filters Row */}
+              <div className="flex flex-nowrap items-center gap-x-4 gap-y-4 w-full">
+                {/* Requested Delivery Date filters */}
                 <div className="flex items-center gap-1.5">
-                  {periods.map((p) => (
-                    <button
-                      key={p.value}
-                      onClick={(e) => { e.stopPropagation(); setSelectedPeriod(p.value); }}
-                      className={selectedPeriod === p.value ? "filter-chip-active" : "filter-chip-inactive"}
-                    >
-                      {p.label}
-                    </button>
-                  ))}
+                  <Calendar className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="mr-1 text-[13px] font-medium text-muted-foreground whitespace-nowrap">Req. Delivery Date</span>
+                  <div className="flex items-center gap-1.5">
+                    {periods.map((p) => (
+                      <button
+                        key={p.value}
+                        onClick={(e) => { e.stopPropagation(); setSelectedPeriod(p.value); }}
+                        className={selectedPeriod === p.value ? "filter-chip-active whitespace-nowrap" : "filter-chip-inactive whitespace-nowrap"}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Divider */}
+                <div className="h-6 w-px bg-border hidden xl:block shrink-0" />
+
+                {/* SO Create Date filter */}
+                <div className="flex items-center gap-1.5">
+                  <Calendar className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="mr-1 text-[13px] font-medium text-muted-foreground whitespace-nowrap">SO Create Date</span>
+                  <div className="flex items-center gap-1.5">
+                    {periods.map((p) => (
+                      <button
+                        key={p.value}
+                        onClick={(e) => { e.stopPropagation(); setSelectedCreationPeriod(p.value); }}
+                        className={selectedCreationPeriod === p.value ? "filter-chip-active whitespace-nowrap" : "filter-chip-inactive whitespace-nowrap"}
+                      >
+                        {p.label}
+                      </button>
+                    ))}
+                  </div>
                 </div>
               </div>
 
-              {/* Divider */}
-              <div className="h-8 w-px bg-border hidden sm:block" />
-
-              {/* Region filter */}
-              <div className="flex items-center gap-2">
-                <Globe className="h-4 w-4 text-muted-foreground" />
-                <span className="mr-1 text-sm font-medium text-muted-foreground">Region</span>
+              {/* Secondary Filters Row */}
+              <div className="flex flex-wrap items-center gap-x-4 gap-y-4">
+                {/* Region filter */}
+              <div className="flex items-center gap-1.5">
+                <Globe className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                <span className="mr-1 text-[13px] font-medium text-muted-foreground whitespace-nowrap">Region</span>
                 <div className="flex items-center gap-1.5">
                   {regions.map((r) => (
                     <button
@@ -346,30 +377,32 @@ export default function Dashboard() {
 
               {/* Divider */}
               {selectedRegion === "NAM" && countriesWithCounts.length > 0 && (
-                <div className="h-8 w-px bg-border hidden sm:block" />
+                <div className="h-6 w-px bg-border hidden sm:block shrink-0" />
               )}
 
               {/* Countries filter */}
               {selectedRegion === "NAM" && countriesWithCounts.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <MapPin className="h-4 w-4 text-muted-foreground" />
-                  <span className="mr-1 text-sm font-medium text-muted-foreground">Countries</span>
+                <div className="flex items-center gap-1.5">
+                  <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="mr-1 text-[13px] font-medium text-muted-foreground whitespace-nowrap">Countries</span>
                   <div className="relative" ref={countryDropdownRef}>
                     <button
                       id="filter-country"
                       type="button"
                       onClick={(e) => { e.stopPropagation(); setCountryDropdownOpen((prev) => !prev); }}
-                      className="region-select flex items-center gap-2 min-w-[140px] justify-between"
+                      className={`region-select flex items-center gap-2 min-w-[140px] justify-between ${
+                        selectedCountry === "all" ? "" : "filter-chip-active text-primary-foreground border-primary"
+                      }`}
                     >
-                      <span>{selectedCountry === "all" ? "All Countries" : selectedCountry}</span>
-                      <ChevronDown className="h-3.5 w-3.5 text-muted-foreground" />
+                      <span className="truncate max-w-[110px]">{selectedCountry === "all" ? "All Countries" : selectedCountry}</span>
+                      <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0" />
                     </button>
                     {countryDropdownOpen && (
                       <div className="absolute left-0 top-full z-50 mt-1 w-64 max-h-72 overflow-y-auto rounded-lg border border-border bg-card shadow-lg">
                         <button
                           type="button"
                           onClick={() => { setSelectedCountry("all"); setCountryDropdownOpen(false); }}
-                          className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-accent transition-colors ${
+                          className={`w-full flex items-center justify-between px-3 py-2 text-[13px] hover:bg-accent transition-colors ${
                             selectedCountry === "all" ? "bg-accent font-medium text-primary" : ""
                           }`}
                         >
@@ -380,7 +413,7 @@ export default function Dashboard() {
                             key={c.name}
                             type="button"
                             onClick={() => { setSelectedCountry(c.name); setCountryDropdownOpen(false); }}
-                            className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-accent transition-colors ${
+                            className={`w-full flex items-center justify-between px-3 py-2 text-[13px] hover:bg-accent transition-colors ${
                               selectedCountry === c.name ? "bg-accent font-medium text-primary" : ""
                             }`}
                           >
@@ -397,14 +430,13 @@ export default function Dashboard() {
               {/* Favorites - only if token exists */}
               {token && (
                 <>
-                  <div className="h-8 w-px bg-border hidden sm:block" />
+                  <div className="h-6 w-px bg-border hidden sm:block shrink-0" />
                   
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-1.5">
                     <div className="relative" ref={favDropdownRef}>
                       <Button
                         variant="outline"
-                        size="sm"
-                        className="h-9 gap-1.5"
+                        className="h-8 rounded-full px-3 text-[13px] font-medium gap-1.5 border-border text-muted-foreground hover:text-foreground"
                         onClick={(e) => { e.stopPropagation(); setFavDropdownOpen((prev) => !prev); }}
                       >
                         <Star className="h-3.5 w-3.5 text-yellow-500 fill-yellow-500/20" />
@@ -444,30 +476,29 @@ export default function Dashboard() {
                     {!showSaveFav ? (
                       <Button
                         variant="ghost"
-                        size="sm"
-                        className="h-9 gap-1.5 text-muted-foreground hover:text-primary"
+                        className="h-8 rounded-full px-3 text-[13px] font-medium gap-1.5 text-muted-foreground hover:text-foreground"
                         onClick={() => setShowSaveFav(true)}
                       >
                         <Save className="h-3.5 w-3.5" />
                         Save Current
                       </Button>
                     ) : (
-                      <div className="flex items-center gap-2 slide-in-from-left-2 animate-in duration-200">
+                      <div className="flex items-center gap-1.5 slide-in-from-left-2 animate-in duration-200">
                         <Input
                           autoFocus
                           placeholder="Filter name..."
                           value={newFavName}
                           onChange={(e) => setNewFavName(e.target.value)}
-                          className="h-9 w-40"
+                          className="h-8 rounded-full px-3 text-[13px] w-40 border-border"
                           onKeyDown={(e) => {
                             if (e.key === 'Enter') handleSaveFavorite();
                             if (e.key === 'Escape') setShowSaveFav(false);
                           }}
                         />
-                        <Button size="sm" className="h-9" onClick={handleSaveFavorite}>
+                        <Button className="h-8 rounded-full px-3 text-[13px] font-medium" onClick={handleSaveFavorite}>
                           Save
                         </Button>
-                        <Button variant="ghost" size="sm" className="h-9 px-2" onClick={() => setShowSaveFav(false)}>
+                        <Button variant="ghost" className="h-8 rounded-full px-3 text-[13px] font-medium text-muted-foreground hover:text-foreground" onClick={() => setShowSaveFav(false)}>
                           Cancel
                         </Button>
                       </div>
@@ -475,6 +506,7 @@ export default function Dashboard() {
                   </div>
                 </>
               )}
+              </div>
             </div>
           )}
         </div>

@@ -36,15 +36,15 @@ otif/
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
-| **ML Model** | LightGBM, scikit-learn, SHAP |
-| **Data** | SQL Server (via SQLAlchemy + pyodbc), Parquet caching |
-| **Backend API** | FastAPI, Uvicorn, JWT auth (python-jose) |
-| **Streamlit UI** | Streamlit, Plotly, Matplotlib, Seaborn |
-| **GenAI** | OpenAI GPT-4o-mini |
-| **Frontend** | React 18, TypeScript, Vite, TailwindCSS, shadcn/ui, Recharts |
-| **Auth** | JWT tokens, bcrypt hashing, SQLite user store |
+| Layer                  | Technology                                                   |
+| ---------------------- | ------------------------------------------------------------ |
+| **ML Model**     | LightGBM, scikit-learn, SHAP                                 |
+| **Data**         | SQL Server (via SQLAlchemy + pyodbc), Parquet caching        |
+| **Backend API**  | FastAPI, Uvicorn, JWT auth (python-jose)                     |
+| **Streamlit UI** | Streamlit, Plotly, Matplotlib, Seaborn                       |
+| **GenAI**        | OpenAI GPT-4o-mini                                           |
+| **Frontend**     | React 18, TypeScript, Vite, TailwindCSS, shadcn/ui, Recharts |
+| **Auth**         | JWT tokens, bcrypt hashing, SQLite user store                |
 
 ---
 
@@ -150,43 +150,43 @@ The model predicts whether a sales order will **HIT** (on-time, in-full) or **MI
 
 ### Model Outputs (per month)
 
-| Artifact | Description |
-|---|---|
-| `model.joblib` | Trained LightGBM classifier |
-| `artifacts.joblib` | Feature engineering maps, threshold, feature columns |
-| `metrics.json` | Precision, recall, F-beta, AUC, confusion matrix |
-| `predictions.csv` | Per-order predictions with probabilities & top-3 SHAP drivers |
-| `shap_summary.csv` | Global feature importance ranking |
-| `reports/*.png` | SHAP bar & beeswarm visualizations |
+| Artifact             | Description                                                   |
+| -------------------- | ------------------------------------------------------------- |
+| `model.joblib`     | Trained LightGBM classifier                                   |
+| `artifacts.joblib` | Feature engineering maps, threshold, feature columns          |
+| `metrics.json`     | Precision, recall, F-beta, AUC, confusion matrix              |
+| `predictions.csv`  | Per-order predictions with probabilities & top-3 SHAP drivers |
+| `shap_summary.csv` | Global feature importance ranking                             |
+| `reports/*.png`    | SHAP bar & beeswarm visualizations                            |
 
 ---
 
 ## API Endpoints
 
-| Endpoint | Method | Description |
-|---|---|---|
-| `/auth/register` | POST | Register a new user |
-| `/auth/login` | POST | Authenticate & get JWT token |
-| `/orders/summary` | POST | Single-order risk summary + GenAI explanation |
-| `/admin/model-dashboard` | GET | Model metrics for a given month |
-| `/admin/shap-summary` | GET | Global SHAP feature importance |
-| `/admin/custom-predict` | POST | Batch prediction from uploaded CSV/Excel |
-| `/admin/train` | POST | Trigger model training |
-| `/admin/data/status` | GET | Master data status |
-| `/admin/data/backtest` | POST | Run full rolling backtest |
-| `/admin/performance-curves` | GET | ROC & PR curve data |
+| Endpoint                      | Method | Description                                   |
+| ----------------------------- | ------ | --------------------------------------------- |
+| `/auth/register`            | POST   | Register a new user                           |
+| `/auth/login`               | POST   | Authenticate & get JWT token                  |
+| `/orders/summary`           | POST   | Single-order risk summary + GenAI explanation |
+| `/admin/model-dashboard`    | GET    | Model metrics for a given month               |
+| `/admin/shap-summary`       | GET    | Global SHAP feature importance                |
+| `/admin/custom-predict`     | POST   | Batch prediction from uploaded CSV/Excel      |
+| `/admin/train`              | POST   | Trigger model training                        |
+| `/admin/data/status`        | GET    | Master data status                            |
+| `/admin/data/backtest`      | POST   | Run full rolling backtest                     |
+| `/admin/performance-curves` | GET    | ROC & PR curve data                           |
 
 ---
 
 ## Frontend Pages
 
-| Route | Access | Description |
-|---|---|---|
-| `/login` | Public | User login |
-| `/register` | Public | User registration |
-| `/` | Auth | Document repository / home |
-| `/dashboard` | Auth | Order predictions dashboard with risk scores & GenAI explanations |
-| `/admin/model-dashboard` | Admin | Model performance metrics, SHAP analysis, custom prediction, data management |
+| Route                      | Access | Description                                                                  |
+| -------------------------- | ------ | ---------------------------------------------------------------------------- |
+| `/login`                 | Public | User login                                                                   |
+| `/register`              | Public | User registration                                                            |
+| `/`                      | Auth   | Document repository / home                                                   |
+| `/dashboard`             | Auth   | Order predictions dashboard with risk scores & GenAI explanations            |
+| `/admin/model-dashboard` | Admin  | Model performance metrics, SHAP analysis, custom prediction, data management |
 
 ---
 
@@ -201,31 +201,32 @@ The model predicts whether a sales order will **HIT** (on-time, in-full) or **MI
 
 ### `backend/otif-model/src/`
 
-| Module | Purpose |
-|---|---|
-| `data_ingestion.py` | SQL queries, Parquet caching, master data management |
-| `preprocessing.py` | Date parsing, leakage removal, target encoding, missing value handling |
+| Module                     | Purpose                                                                     |
+| -------------------------- | --------------------------------------------------------------------------- |
+| `data_ingestion.py`      | SQL queries, Parquet caching, master data management                        |
+| `preprocessing.py`       | Date parsing, leakage removal, target encoding, missing value handling      |
 | `feature_engineering.py` | 10-stage feature pipeline (lead time, congestion, miss rates, interactions) |
-| `trainer.py` | LightGBM training, rolling monthly loop, artifact persistence |
-| `evaluator.py` | Metrics computation, threshold search, adaptive threshold calibration |
-| `explainability.py` | SHAP extraction, report generation, PDF export |
+| `trainer.py`             | LightGBM training, rolling monthly loop, artifact persistence               |
+| `evaluator.py`           | Metrics computation, threshold search, adaptive threshold calibration       |
+| `explainability.py`      | SHAP extraction, report generation, PDF export                              |
 
 ### `backend/otif-genai/llm/`
 
-| Module | Purpose |
-|---|---|
+| Module               | Purpose                                                                |
+| -------------------- | ---------------------------------------------------------------------- |
 | `llm_explainer.py` | OpenAI GPT-4o-mini integration for natural-language order explanations |
 
 ### `otif-insight-hub/src/pages/`
 
-| Page | Purpose |
-|---|---|
-| `Dashboard.tsx` | User-facing order predictions table with risk scores |
-| `AdminModelDashboard.tsx` | Admin panel with metrics, charts, SHAP, custom prediction, data management |
-| `Login.tsx` / `Register.tsx` | Authentication forms |
-| `DocumentRepository.tsx` | Home / document view |
+| Page                             | Purpose                                                                    |
+| -------------------------------- | -------------------------------------------------------------------------- |
+| `Dashboard.tsx`                | User-facing order predictions table with risk scores                       |
+| `AdminModelDashboard.tsx`      | Admin panel with metrics, charts, SHAP, custom prediction, data management |
+| `Login.tsx` / `Register.tsx` | Authentication forms                                                       |
+| `DocumentRepository.tsx`       | Home / document view                                                       |
 
 ---
 
 ## License
+
 Internal project — not licensed for external distribution.

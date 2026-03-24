@@ -5,8 +5,12 @@ from typing import Any, Mapping, Optional, Sequence, Tuple
 
 from dotenv import load_dotenv
 from openai import OpenAI
+from tenacity import retry, stop_after_attempt, wait_exponential
 
+from utils.logger import get_logger
 from config.column_definitions import COLUMN_DEFINITIONS
+
+logger = get_logger(__name__)
 
 
 _DOTENV_PATH = Path(__file__).resolve().parents[1] / ".env"
@@ -103,13 +107,8 @@ SHAP_ONE_LINE: <one-line explanation of the key SHAP drivers>
     return prompt
 
 
-def generate_explanation(data):
-
-    prompt = build_prompt(data)
-
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY is not set. Set it in environment or otif-genai/.env.")
-
+@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True)
+def _call_openai(prompt: str) -> str:
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
@@ -120,8 +119,24 @@ def generate_explanation(data):
         max_tokens=150,
         timeout=15.0  # Prevent "stuck" loading states
     )
-
     return response.choices[0].message.content
+
+def generate_explanation(data):
+    logger.debug("Building prompt for explanation")
+    prompt = build_prompt(data)
+
+    if not os.getenv("OPENAI_API_KEY"):
+        logger.error("OPENAI_API_KEY is missing from environment")
+        raise ValueError("OPENAI_API_KEY is not set. Set it in environment or otif-genai/.env.")
+
+    logger.info("Calling OpenAI API for explanation generation")
+    try:
+        explanation = _call_openai(prompt)
+        logger.debug("Successfully generated explanation")
+        return explanation
+    except Exception as e:
+        logger.error("Failed to generate explanation from OpenAI after retries", exc_info=True)
+        raise RuntimeError(f"Failed to generate explanation: {str(e)}") from e
 
 
 def summarize_reason(
@@ -176,4 +191,5 @@ def summarize_reason(
         shap_one_liner = "Key drivers: " + ", ".join(driver_bits) if driver_bits else "Key drivers: (not available)"
 
     summary_text = "\n".join(lines).strip()
+    logger.debug("Summary and SHAP one-liner successfully extracted")
     return summary_text, shap_one_liner.strip()

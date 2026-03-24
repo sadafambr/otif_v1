@@ -117,19 +117,16 @@
     @apply kpi-card border-success/20;
   }
   .filter-chip {
-    @apply px-4 py-1.5 text-sm rounded-full border cursor-pointer transition-colors;
+    @apply h-8 px-3 text-[13px] font-medium rounded-full border cursor-pointer transition-colors inline-flex items-center justify-center whitespace-nowrap;
   }
   .filter-chip-active {
     @apply filter-chip bg-primary text-primary-foreground border-primary;
   }
   .filter-chip-inactive {
-    @apply filter-chip bg-card text-muted-foreground border-border hover:bg-accent;
+    @apply filter-chip bg-card text-muted-foreground border-border hover:bg-accent hover:text-accent-foreground;
   }
   .region-select {
-    @apply px-3 py-1.5 text-sm rounded-full border border-border bg-card text-foreground cursor-pointer transition-colors;
-  }
-  .region-select:hover {
-    @apply bg-accent;
+    @apply h-8 px-3 text-[13px] font-medium rounded-full border border-border bg-card text-muted-foreground cursor-pointer transition-colors inline-flex items-center justify-center whitespace-nowrap hover:bg-accent hover:text-accent-foreground;
   }
   .region-select:focus {
     @apply outline-none ring-2 ring-ring ring-offset-1;

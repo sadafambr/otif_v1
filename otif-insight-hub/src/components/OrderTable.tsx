@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 import { Search, Download, ArrowUpDown, ChevronDown, Columns2, ChevronUp, ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +28,34 @@ interface OrderTableProps {
 
 type SortKey = "salesOrder" | "customer" | "material" | "plant" | "reqDelivery" | "riskScore" | "status";
 
+type ColumnLayoutState = {
+  order?: string[];
+  widths?: Record<string, number>;
+};
+
+const COLUMN_LAYOUT_STORAGE_KEY = "otif.orderTable.columnLayout.v1";
+const MIN_COL_WIDTH = 80;
+
+function safeReadLayout(): ColumnLayoutState | null {
+  try {
+    const raw = localStorage.getItem(COLUMN_LAYOUT_STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as ColumnLayoutState;
+    if (!parsed || typeof parsed !== "object") return null;
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+function safeWriteLayout(next: ColumnLayoutState) {
+  try {
+    localStorage.setItem(COLUMN_LAYOUT_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // ignore storage errors (private mode, quotas, etc.)
+  }
+}
+
 function getColumnDisplayName(key: string): string {
   return COMPUTED_DISPLAY_NAMES[key] ?? getDisplayName(key);
 }
@@ -53,6 +81,11 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
   const pageSize = 25;
+
+  // Column resize + drag reorder
+  const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const draggingKeyRef = useRef<string | null>(null);
+  const resizeRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
 
   // Available columns: from data or rawHeaders + computed
   const availableColumnKeys = useMemo(() => {
@@ -81,20 +114,48 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => []);
   useEffect(() => {
     if (availableColumnKeys.length === 0) return;
+    const saved = safeReadLayout();
+    const savedOrder = saved?.order?.filter((k) => availableColumnKeys.includes(k)) ?? [];
+    const savedWidths = saved?.widths ?? {};
+
     setVisibleColumnKeys((prev) => {
       if (prev.length > 0) {
-        // Keep only keys that are still available; reorder to match dataset order
+        // Keep only keys that are still available; apply saved order when present
         const stillVisible = prev.filter((k) => availableColumnKeys.includes(k));
-        const added = availableColumnKeys.filter((k) => !stillVisible.includes(k));
-        const merged = [...stillVisible, ...added];
-        return availableColumnKeys.filter((k) => merged.includes(k));
+        if (savedOrder.length === 0) return stillVisible;
+        const inSavedOrder = savedOrder.filter((k) => stillVisible.includes(k));
+        const rest = stillVisible.filter((k) => !inSavedOrder.includes(k));
+        return [...inSavedOrder, ...rest];
       }
       // Initialize with DEFAULT_COLUMN_KEYS
       const defaultVisible = DEFAULT_COLUMN_KEYS.map(k => resolveDefaultColumn(k, availableColumnKeys))
         .filter(k => availableColumnKeys.includes(k));
-      return defaultVisible.length > 0 ? Array.from(new Set(defaultVisible)) : [...availableColumnKeys];
+      const initial = defaultVisible.length > 0 ? Array.from(new Set(defaultVisible)) : [...availableColumnKeys];
+      if (savedOrder.length === 0) return initial;
+      const inSavedOrder = savedOrder.filter((k) => initial.includes(k));
+      const rest = initial.filter((k) => !inSavedOrder.includes(k));
+      return [...inSavedOrder, ...rest];
+    });
+
+    setColumnWidths((prev) => {
+      const next = { ...prev };
+      for (const [k, w] of Object.entries(savedWidths)) {
+        if (!availableColumnKeys.includes(k)) continue;
+        if (typeof w !== "number" || !isFinite(w)) continue;
+        next[k] = Math.max(MIN_COL_WIDTH, Math.round(w));
+      }
+      return next;
     });
   }, [availableColumnKeys.join(",")]);
+
+  // Persist column order + widths
+  useEffect(() => {
+    if (visibleColumnKeys.length === 0) return;
+    const timeoutId = setTimeout(() => {
+      safeWriteLayout({ order: visibleColumnKeys, widths: columnWidths });
+    }, 300);
+    return () => clearTimeout(timeoutId);
+  }, [visibleColumnKeys, columnWidths]);
 
   const toggleColumn = (key: string) => {
     setVisibleColumnKeys((prev) => {
@@ -118,6 +179,50 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       return next;
     });
   };
+
+  const reorderColumns = (fromKey: string, toKey: string) => {
+    setVisibleColumnKeys((prev) => {
+      if (fromKey === toKey) return prev;
+      const fromIndex = prev.indexOf(fromKey);
+      const toIndex = prev.indexOf(toKey);
+      if (fromIndex < 0 || toIndex < 0) return prev;
+      const next = [...prev];
+      next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, fromKey);
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    let animationFrameId: number | null = null;
+
+    const onMouseMove = (e: MouseEvent) => {
+      if (!resizeRef.current) return;
+      if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
+
+      animationFrameId = requestAnimationFrame(() => {
+        if (!resizeRef.current) return;
+        const { key, startX, startWidth } = resizeRef.current;
+        const delta = e.clientX - startX;
+        const next = Math.max(MIN_COL_WIDTH, Math.round(startWidth + delta));
+        setColumnWidths((prev) => ({ ...prev, [key]: next }));
+        animationFrameId = null;
+      });
+    };
+    const onMouseUp = () => {
+      resizeRef.current = null;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+      if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
+    };
+  }, []);
 
   // Column filter states
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
@@ -488,22 +593,49 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                 const isStatus = key === "status" || key === "otif_hit/miss" || key === "otif_hit";
                 const sortKey: SortKey | null =
                   isSalesOrder ? "salesOrder" : isCustomer ? "customer" : isMaterial ? "material" : isPlant ? "plant" : isReqDelivery ? "reqDelivery" : isRiskScore ? "riskScore" : isStatus ? "status" : null;
+                const width = columnWidths[key];
                 return (
-                  <th key={key} className="sticky top-0 z-10 bg-card pb-3 pt-3 pr-4 text-left border-b border-border/70">
+                  <th
+                    key={key}
+                    draggable
+                    onDragStart={(e) => {
+                      draggingKeyRef.current = key;
+                      e.dataTransfer.effectAllowed = "move";
+                      try {
+                        e.dataTransfer.setData("text/plain", key);
+                      } catch {
+                        // ignore
+                      }
+                    }}
+                    onDragOver={(e) => {
+                      // allow drop
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = "move";
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const fromKey = draggingKeyRef.current ?? "";
+                      if (fromKey) reorderColumns(fromKey, key);
+                      draggingKeyRef.current = null;
+                    }}
+                    className="sticky top-0 z-10 bg-card pb-3 pt-3 pr-6 text-left border-b border-border/70 relative select-none"
+                    style={width ? { width: `${width}px`, minWidth: `${width}px`, maxWidth: `${width}px` } : undefined}
+                    title="Drag to reorder. Drag edge to resize."
+                  >
                     <div className="flex items-center gap-0.5">
                       {sortKey ? (
                         <button
                           onClick={() => toggleSort(sortKey)}
-                          className="flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground"
+                          className="flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground flex-1 text-left"
                         >
-                          {label}
-                          <ArrowUpDown className="h-3 w-3" />
+                          <span className="break-words whitespace-normal">{label}</span>
+                          <ArrowUpDown className="h-3 w-3 shrink-0" />
                           {sortBy === sortKey && (
-                            <ChevronDown className={`h-3 w-3 transition-transform ${sortDir === "asc" ? "rotate-180" : ""}`} />
+                            <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${sortDir === "asc" ? "rotate-180" : ""}`} />
                           )}
                         </button>
                       ) : (
-                        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</span>
+                        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex-1 break-words whitespace-normal text-left">{label}</span>
                       )}
                       {isSalesOrder && (
                         <ColumnFilterCheckbox label="Sales Order" options={uniqueSalesOrders} selected={salesOrderFilter} onChange={setSalesOrderFilter} />
@@ -554,6 +686,23 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                         />
                       )}
                     </div>
+                    <div
+                      role="separator"
+                      aria-orientation="vertical"
+                      onMouseDown={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        const th = (e.currentTarget as HTMLDivElement).parentElement as HTMLElement | null;
+                        const startWidth = th ? th.getBoundingClientRect().width : (columnWidths[key] ?? 160);
+                        resizeRef.current = { key, startX: e.clientX, startWidth };
+                        document.body.style.cursor = "col-resize";
+                        document.body.style.userSelect = "none";
+                      }}
+                      className="absolute right-0 top-0 h-full w-2 cursor-col-resize group"
+                      title="Drag to resize"
+                    >
+                      <div className="mx-auto h-full w-px bg-border/70 group-hover:bg-border" />
+                    </div>
                   </th>
                 );
               })}
@@ -571,14 +720,16 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                   const isStatus = key === "status" || key === "otif_hit/miss" || key === "otif_hit";
                   const isSalesOrder = key === "sales order" || key === "sales_order";
                   const isRiskScore = key === "riskScore";
+                  const width = columnWidths[key];
                   return (
                     <td
                       key={key}
                       className={`py-3.5 pr-4 text-left border-b border-border/60 align-top ${
                         isSalesOrder ? "font-medium text-primary" : ""
                       } ${
-                        key === "riskSignals" ? "max-w-[260px] text-xs text-muted-foreground" : "whitespace-nowrap"
+                        key === "riskSignals" ? "max-w-[260px] text-xs text-muted-foreground" : "break-words whitespace-normal"
                       }`}
+                      style={width ? { width: `${width}px`, minWidth: `${width}px`, maxWidth: `${width}px` } : undefined}
                     >
                       {isStatus && typeof val === "string" && (val === "Hit" || val === "Miss") ? (
                         <span className={`${val === "Hit" ? "status-hit" : "status-miss"} inline-flex items-center justify-center whitespace-nowrap`}>
@@ -587,7 +738,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                       ) : isRiskScore && typeof val === "number" ? (
                         `${val}%`
                       ) : (
-                        <span className="block text-left">{String(val ?? "")}</span>
+                        <span className="block text-left break-words whitespace-normal">{String(val ?? "")}</span>
                       )}
                     </td>
                   );

@@ -58,7 +58,7 @@ export function ColumnFilterCheckbox({ label, options, selected, onChange }: Col
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
                 <button
-                    className="ml-1 inline-flex items-center focus:outline-none"
+                    className="ml-1 inline-flex items-center focus:outline-none shrink-0"
                     title={`Filter ${label}`}
                 >
                     <Filter
