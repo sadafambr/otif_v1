@@ -5,12 +5,8 @@ from typing import Any, Mapping, Optional, Sequence, Tuple
 
 from dotenv import load_dotenv
 from openai import OpenAI
-from tenacity import retry, stop_after_attempt, wait_exponential
 
-from utils.logger import get_logger
 from config.column_definitions import COLUMN_DEFINITIONS
-
-logger = get_logger(__name__)
 
 
 _DOTENV_PATH = Path(__file__).resolve().parents[1] / ".env"
@@ -94,10 +90,16 @@ Third Driver:
 {data.get("top3_feature")} = {data.get("top3_value")}
 
 =====================
+FEATURE DEFINITIONS
+=====================
+
+{COLUMN_DEFINITIONS}
+
+=====================
 INSTRUCTIONS
 =====================
 
-Provide a 2–3 sentence explanation covering the root cause and key risk drivers. Use professional supply chain language.
+Provide a detailed explanation of at least 7 lines covering the root cause, key risk drivers, and actionable insights. Use professional supply chain language.
 
 End your response with exactly one final line in this format (max 25 words):
 SHAP_ONE_LINE: <one-line explanation of the key SHAP drivers>
@@ -107,36 +109,57 @@ SHAP_ONE_LINE: <one-line explanation of the key SHAP drivers>
     return prompt
 
 
-@retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=10), reraise=True)
-def _call_openai(prompt: str) -> str:
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are an expert OTIF supply chain analyst. Be concise."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.2,
-        max_tokens=150,
-        timeout=15.0  # Prevent "stuck" loading states
-    )
-    return response.choices[0].message.content
-
 def generate_explanation(data):
-    logger.debug("Building prompt for explanation")
+
     prompt = build_prompt(data)
 
     if not os.getenv("OPENAI_API_KEY"):
-        logger.error("OPENAI_API_KEY is missing from environment")
-        raise ValueError("OPENAI_API_KEY is not set. Set it in environment or otif-genai/.env.")
+        raise RuntimeError("OPENAI_API_KEY is not set. Set it in environment or otif-genai/.env.")
 
-    logger.info("Calling OpenAI API for explanation generation")
-    try:
-        explanation = _call_openai(prompt)
-        logger.debug("Successfully generated explanation")
-        return explanation
-    except Exception as e:
-        logger.error("Failed to generate explanation from OpenAI after retries", exc_info=True)
-        raise RuntimeError(f"Failed to generate explanation: {str(e)}") from e
+    response = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[
+            {"role": "system", "content": """Act as an expert in supply chain planning, demand fulfillment, and machine learning interpretability.
+ 
+We have built an OTIF (On-Time In-Full) prediction model using LightGBM. The model is trained on engineered features derived from sales order data, including calculated lead times, delays, and other operational signals.
+ 
+For each prediction (OTIF Hit or Miss), we also generate the top 3 contributing features (feature importance at prediction level).
+ 
+Problem:
+The features used in the model are technical and engineered by data scientists, making them difficult for business users (supply chain planners, customer service teams, sales teams) to understand.
+ 
+Objective:
+Help translate these model features into clear, business-friendly explanations that:
+ 
+Are easily understood by non-technical users
+ 
+Clearly explain why an order is predicted as OTIF hit/miss
+ 
+Enable users to take action (not just interpret)
+ 
+What I will provide next:
+ 
+A list of engineered features and how they are calculated
+ 
+What I want from you:
+ 
+Convert each feature into a business-friendly description
+ 
+Map each feature to a real-world supply chain concept (e.g., supplier delay, warehouse constraint, customer requested date issue)
+ 
+Provide a standardized explanation template for OTIF predictions (e.g., "This order is likely to miss OTIF because…")
+ 
+Suggest how to group features into meaningful categories (e.g., supply risk, logistics delay, order complexity)
+ 
+Recommend how to display these insights in a UI/dashboard for maximum adoption."""},
+            {"role": "user", "content": prompt}
+        ],
+        temperature=0.2,
+        max_tokens=300,
+        timeout=15.0  # Prevent "stuck" loading states
+    )
+
+    return response.choices[0].message.content
 
 
 def summarize_reason(
@@ -191,5 +214,4 @@ def summarize_reason(
         shap_one_liner = "Key drivers: " + ", ".join(driver_bits) if driver_bits else "Key drivers: (not available)"
 
     summary_text = "\n".join(lines).strip()
-    logger.debug("Summary and SHAP one-liner successfully extracted")
     return summary_text, shap_one_liner.strip()
