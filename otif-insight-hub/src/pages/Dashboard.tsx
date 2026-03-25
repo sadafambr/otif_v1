@@ -291,11 +291,9 @@ export default function Dashboard() {
                   <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
                     {selectedPeriod === "all" ? "All Time" : periods.find(p => p.value === selectedPeriod)?.label}
                   </span>
-                  {selectedCreationPeriod !== "all" && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                      Created: {periods.find(p => p.value === selectedCreationPeriod)?.label}
-                    </span>
-                  )}
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
+                    Created: {selectedCreationPeriod === "all" ? "All Time" : periods.find(p => p.value === selectedCreationPeriod)?.label}
+                  </span>
                   <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
                     {selectedRegion}
                   </span>
