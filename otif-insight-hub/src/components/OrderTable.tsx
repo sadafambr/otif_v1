@@ -1,13 +1,14 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { Search, Download, ArrowUpDown, ChevronDown, Columns2, ChevronUp, ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ColumnFilterCheckbox } from "@/components/ColumnFilterCheckbox";
 import { ColumnFilterRange } from "@/components/ColumnFilterRange";
 import { ColumnFilterDate } from "@/components/ColumnFilterDate";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger, DropdownMenuItem, DropdownMenuSeparator } from "@/components/ui/dropdown-menu";
+import { ColumnFilterSelect } from "@/components/ColumnFilterSelect";
+import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
-import { Bookmark, RotateCcw, Save } from "lucide-react";
+import { RotateCcw } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { getDisplayName, DEFAULT_COLUMN_KEYS, resolveDefaultColumn } from "@/lib/columnMapping";
 import type { OTIFRecord } from "@/types/otif";
@@ -26,15 +27,59 @@ interface OrderTableProps {
   onOrderClick: (order: OTIFRecord) => void;
 }
 
-type SortKey = "salesOrder" | "customer" | "material" | "plant" | "reqDelivery" | "riskScore" | "status";
+type SortKey = string;
 
 type ColumnLayoutState = {
   order?: string[];
   widths?: Record<string, number>;
 };
 
+type ColumnFilterType = "checkbox" | "range" | "date" | "leadtime";
+
+interface ColumnFilterState {
+  checkboxFilters: Record<string, Set<string>>;
+  rangeFilters: Record<string, { min?: number; max?: number }>;
+  dateFilters: Record<string, { start?: string; end?: string }>;
+  leadTimePreset: string | undefined;
+}
+
 const COLUMN_LAYOUT_STORAGE_KEY = "otif.orderTable.columnLayout.v1";
 const MIN_COL_WIDTH = 80;
+
+const DATE_PATTERNS = [
+  /\d{4}-\d{2}-\d{2}/,
+  /\d{2}\/\d{2}\/\d{4}/,
+  /\d{2}-\d{2}-\d{4}/,
+  /\w{3}\s+\d{1,2},?\s+\d{4}/,
+];
+
+function looksLikeDate(value: string): boolean {
+  if (!value || value.length < 6) return false;
+  return DATE_PATTERNS.some((p) => p.test(value));
+}
+
+function looksLikeNumber(value: string): boolean {
+  if (!value) return false;
+  const cleaned = value.replace(/[,%$€£]/g, "").trim();
+  return cleaned !== "" && !isNaN(Number(cleaned));
+}
+
+function parseNumeric(value: string): number {
+  return parseFloat(value.replace(/[,%$€£]/g, "").trim());
+}
+
+function detectColumnType(values: string[]): ColumnFilterType {
+  const sampled = values.filter(Boolean).slice(0, 50);
+  if (sampled.length === 0) return "checkbox";
+
+  const dateCount = sampled.filter(looksLikeDate).length;
+  if (dateCount / sampled.length > 0.6) return "date";
+
+  const numCount = sampled.filter(looksLikeNumber).length;
+  if (numCount / sampled.length > 0.6) return "range";
+
+  return "checkbox";
+}
 
 function safeReadLayout(): ColumnLayoutState | null {
   try {
@@ -52,7 +97,7 @@ function safeWriteLayout(next: ColumnLayoutState) {
   try {
     localStorage.setItem(COLUMN_LAYOUT_STORAGE_KEY, JSON.stringify(next));
   } catch {
-    // ignore storage errors (private mode, quotas, etc.)
+    // ignore
   }
 }
 
@@ -75,6 +120,60 @@ function getCellValue(order: OTIFRecord, columnKey: string): string | number {
   return order.rawData?.[columnKey] ?? "";
 }
 
+const SHAP_FEATURE_LABELS: Record<string, string> = {
+  f_so_to_rdd_days: "Order-to-Delivery Window",
+  f_so_to_mat_avail_days: "Days Until Material Ready",
+  f_mat_avail_to_rdd_days: "Material-to-Delivery Buffer",
+  f_mat_ready_after_rdd: "Late Material Flag",
+  f_request_lead_days: "Customer Requested Lead Time",
+  f_material_lead_days: "Material Supply Lead Time",
+  f_lead_gap_days: "Supply Cushion Days",
+  f_tight_ratio: "Timeline Tightness Ratio",
+  f_is_tight_order: "Tight Order Flag",
+  f_is_extremely_tight: "Critical Timeline Flag",
+  f_critical_negative_gap: "Severe Delay Risk Flag",
+  f_mild_negative_gap: "Minor Delay Risk Flag",
+  f_large_positive_gap: "Comfortable Buffer Flag",
+  f_gap_bin: "Low Buffer Quartile Flag",
+  f_unit_price_log: "Unit Price (Log)",
+  f_so_woy_sin: "Order Week Seasonality (Sin)",
+  f_so_woy_cos: "Order Week Seasonality (Cos)",
+  f_rdd_woy_sin: "Delivery Week Seasonality (Sin)",
+  f_rdd_woy_cos: "Delivery Week Seasonality (Cos)",
+  f_qty_log: "Order Volume (Log)",
+  f_high_qty_flag: "Large Order Flag",
+  f_high_value_flag: "High Value Order Flag",
+  f_high_value_x_tight: "High Value + Tight Timeline",
+  f_tolerance_band: "Delivery Quantity Tolerance",
+  f_strict_tolerance: "Strict Tolerance Customer",
+  f_strict_x_tight: "Strict Customer + Tight Deadline",
+  f_tolerance_x_gap: "Gap Exceeds Tolerance",
+  f_plant_orders_7d: "Plant Load (7 Days)",
+  f_plant_orders_30d: "Plant Load (30 Days)",
+  f_material_orders_7d: "Material Demand (7 Days)",
+  f_material_orders_30d: "Material Demand (30 Days)",
+  f_shipto_orders_7d: "Customer Site Volume (7 Days)",
+  f_shipto_orders_30d: "Customer Site Volume (30 Days)",
+  f_mat_total_orders_log: "Material Order Frequency (Log)",
+  f_gap_x_load: "Buffer Under Plant Pressure",
+  f_tight_x_plant_load: "Tight Order at Busy Plant",
+  f_mat_shipto_x_pressure: "Material + Customer Risk Pressure",
+  f_customer_miss_rate: "Customer OTIF Miss Rate",
+  f_material_miss_rate: "Material OTIF Miss Rate",
+  f_plant_miss_rate: "Plant OTIF Miss Rate",
+  f_bu_miss_rate: "Business Unit OTIF Miss Rate",
+  f_mat_shipto_miss_rate: "Material × Customer Miss Rate",
+  f_plant_material_miss_rate: "Material × Plant Miss Rate",
+  f_plant_shipto_miss_rate: "Plant × Customer Miss Rate",
+  f_state_miss_rate: "Regional OTIF Miss Rate",
+  f_strict_x_plant_miss: "Strict Customer at Weak Plant",
+  f_high_plant_risk: "High Risk Plant Flag",
+  f_risk_stack: "Compounded Risk Flag",
+  f_otif_risk_score: "Overall OTIF Risk Score",
+};
+
+const LEAD_TIME_THRESHOLD = 60;
+
 export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps) {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortKey | null>(null);
@@ -82,12 +181,10 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   const [page, setPage] = useState(1);
   const pageSize = 25;
 
-  // Column resize + drag reorder
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const draggingKeyRef = useRef<string | null>(null);
   const resizeRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
 
-  // Available columns: from data or rawHeaders + computed
   const availableColumnKeys = useMemo(() => {
     const fromData =
       rawHeaders?.length ? rawHeaders : orders[0] ? Object.keys(orders[0].rawData || {}) : [];
@@ -110,7 +207,14 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     return list;
   }, [orders, rawHeaders]);
 
-  // Visible columns in dataset order; init to full list when available columns change
+  const defaultVisibleKeys = useMemo(() => {
+    if (availableColumnKeys.length === 0) return [];
+    const resolved = DEFAULT_COLUMN_KEYS
+      .map((k) => resolveDefaultColumn(k, availableColumnKeys))
+      .filter((k) => availableColumnKeys.includes(k));
+    return resolved.length > 0 ? Array.from(new Set(resolved)) : [...availableColumnKeys];
+  }, [availableColumnKeys]);
+
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => []);
   useEffect(() => {
     if (availableColumnKeys.length === 0) return;
@@ -120,17 +224,13 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
 
     setVisibleColumnKeys((prev) => {
       if (prev.length > 0) {
-        // Keep only keys that are still available; apply saved order when present
         const stillVisible = prev.filter((k) => availableColumnKeys.includes(k));
         if (savedOrder.length === 0) return stillVisible;
         const inSavedOrder = savedOrder.filter((k) => stillVisible.includes(k));
         const rest = stillVisible.filter((k) => !inSavedOrder.includes(k));
         return [...inSavedOrder, ...rest];
       }
-      // Initialize with DEFAULT_COLUMN_KEYS
-      const defaultVisible = DEFAULT_COLUMN_KEYS.map(k => resolveDefaultColumn(k, availableColumnKeys))
-        .filter(k => availableColumnKeys.includes(k));
-      const initial = defaultVisible.length > 0 ? Array.from(new Set(defaultVisible)) : [...availableColumnKeys];
+      const initial = defaultVisibleKeys.length > 0 ? [...defaultVisibleKeys] : [...availableColumnKeys];
       if (savedOrder.length === 0) return initial;
       const inSavedOrder = savedOrder.filter((k) => initial.includes(k));
       const rest = initial.filter((k) => !inSavedOrder.includes(k));
@@ -148,7 +248,6 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     });
   }, [availableColumnKeys.join(",")]);
 
-  // Persist column order + widths
   useEffect(() => {
     if (visibleColumnKeys.length === 0) return;
     const timeoutId = setTimeout(() => {
@@ -160,12 +259,14 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   const toggleColumn = (key: string) => {
     setVisibleColumnKeys((prev) => {
       if (prev.includes(key)) return prev.filter((k) => k !== key);
-      const datasetIndex = availableColumnKeys.indexOf(key);
-      if (datasetIndex < 0) return [...prev, key];
       const next = [...prev, key];
       return availableColumnKeys.filter((k) => next.includes(k));
     });
   };
+
+  const selectAllColumns = () => setVisibleColumnKeys([...availableColumnKeys]);
+  const deselectAllColumns = () => setVisibleColumnKeys([]);
+  const resetToDefaultColumns = () => setVisibleColumnKeys([...defaultVisibleKeys]);
 
   const moveColumn = (key: string, direction: "up" | "down") => {
     setVisibleColumnKeys((prev) => {
@@ -195,11 +296,9 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
 
   useEffect(() => {
     let animationFrameId: number | null = null;
-
     const onMouseMove = (e: MouseEvent) => {
       if (!resizeRef.current) return;
       if (animationFrameId !== null) cancelAnimationFrame(animationFrameId);
-
       animationFrameId = requestAnimationFrame(() => {
         if (!resizeRef.current) return;
         const { key, startX, startWidth } = resizeRef.current;
@@ -214,7 +313,6 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
-
     window.addEventListener("mousemove", onMouseMove);
     window.addEventListener("mouseup", onMouseUp);
     return () => {
@@ -224,54 +322,101 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     };
   }, []);
 
-  // Column filter states
-  const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
-  const [plantFilter, setPlantFilter] = useState<Set<string>>(new Set());
-  const [customerFilter, setCustomerFilter] = useState<Set<string>>(new Set());
-  const [materialFilter, setMaterialFilter] = useState<Set<string>>(new Set());
-  const [salesOrderFilter, setSalesOrderFilter] = useState<Set<string>>(new Set());
-  const [businessUnitFilter, setBusinessUnitFilter] = useState<Set<string>>(new Set());
-  const [leadTimeMin, setLeadTimeMin] = useState<number | undefined>(undefined);
-  const [leadTimeMax, setLeadTimeMax] = useState<number | undefined>(undefined);
-  const [riskScoreMin, setRiskScoreMin] = useState<number | undefined>(undefined);
-  const [riskScoreMax, setRiskScoreMax] = useState<number | undefined>(undefined);
-  const [soDateStart, setSoDateStart] = useState<string | undefined>(undefined);
-  const [soDateEnd, setSoDateEnd] = useState<string | undefined>(undefined);
+  // --- Dynamic filter state ---
+  const [checkboxFilters, setCheckboxFilters] = useState<Record<string, Set<string>>>({});
+  const [rangeFilters, setRangeFilters] = useState<Record<string, { min?: number; max?: number }>>({});
+  const [dateFilters, setDateFilters] = useState<Record<string, { start?: string; end?: string }>>({});
+  const [leadTimePreset, setLeadTimePreset] = useState<string | undefined>(`lt_${LEAD_TIME_THRESHOLD}`);
 
+  const columnTypeCache = useRef<Record<string, ColumnFilterType>>({});
+
+  const getColumnFilterType = useCallback(
+    (key: string): ColumnFilterType => {
+      if (key === "leadTime") return "leadtime";
+      if (key === "riskScore") return "range";
+      if (key === "status") return "checkbox";
+      if (key === "riskSignals") return "checkbox";
+
+      if (columnTypeCache.current[key]) return columnTypeCache.current[key];
+
+      const values = orders.slice(0, 100).map((o) => String(getCellValue(o, key)));
+      const detected = detectColumnType(values);
+      columnTypeCache.current[key] = detected;
+      return detected;
+    },
+    [orders]
+  );
+
+  const getUniqueValues = useCallback(
+    (key: string): string[] => {
+      const vals = new Set<string>();
+      for (const o of orders) {
+        const v = String(getCellValue(o, key)).trim();
+        if (v) vals.add(v);
+      }
+      return [...vals].sort();
+    },
+    [orders]
+  );
+
+  const getRangeBounds = useCallback(
+    (key: string): { min: number; max: number } => {
+      let min = Infinity;
+      let max = -Infinity;
+      for (const o of orders) {
+        const raw = String(getCellValue(o, key));
+        const n = parseNumeric(raw);
+        if (!isNaN(n)) {
+          if (n < min) min = n;
+          if (n > max) max = n;
+        }
+      }
+      if (!isFinite(min)) return { min: 0, max: 100 };
+      return { min: Math.floor(min), max: Math.ceil(max) };
+    },
+    [orders]
+  );
+
+  const setCheckboxFilter = useCallback((key: string, value: Set<string>) => {
+    setCheckboxFilters((prev) => {
+      if (value.size === 0) {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      return { ...prev, [key]: value };
+    });
+  }, []);
+
+  const setRangeFilter = useCallback((key: string, min: number | undefined, max: number | undefined) => {
+    setRangeFilters((prev) => {
+      if (min === undefined && max === undefined) {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      return { ...prev, [key]: { min, max } };
+    });
+  }, []);
+
+  const setDateFilter = useCallback((key: string, start: string | undefined, end: string | undefined) => {
+    setDateFilters((prev) => {
+      if (!start && !end) {
+        const next = { ...prev };
+        delete next[key];
+        return next;
+      }
+      return { ...prev, [key]: { start, end } };
+    });
+  }, []);
 
   const clearAllFilters = () => {
-    setStatusFilter(new Set());
-    setPlantFilter(new Set());
-    setCustomerFilter(new Set());
-    setMaterialFilter(new Set());
-    setSalesOrderFilter(new Set());
-    setBusinessUnitFilter(new Set());
-    setLeadTimeMin(undefined);
-    setLeadTimeMax(undefined);
-    setRiskScoreMin(undefined);
-    setRiskScoreMax(undefined);
-    setSoDateStart(undefined);
-    setSoDateEnd(undefined);
+    setCheckboxFilters({});
+    setRangeFilters({});
+    setDateFilters({});
+    setLeadTimePreset(`lt_${LEAD_TIME_THRESHOLD}`);
     setSearch("");
   };
-
-  // Extract unique values from data for checkbox filters
-  const uniquePlants = useMemo(() => [...new Set(orders.map((o) => o.plant).filter(Boolean))].sort(), [orders]);
-  const uniqueCustomers = useMemo(() => [...new Set(orders.map((o) => o.customer).filter(Boolean))].sort(), [orders]);
-  const uniqueMaterials = useMemo(() => [...new Set(orders.map((o) => o.material).filter(Boolean))].sort(), [orders]);
-  const uniqueSalesOrders = useMemo(() => [...new Set(orders.map((o) => o.salesOrder).filter(Boolean))].sort(), [orders]);
-  const uniqueStatuses = useMemo(() => [...new Set(orders.map((o) => o.status).filter(Boolean))].sort(), [orders]);
-  const uniqueBusinessUnits = useMemo(() => {
-    const key = "division of business name";
-    return [...new Set(orders.map((o) => (o.rawData?.[key] ?? "").trim()).filter(Boolean))].sort();
-  }, [orders]);
-
-  // Compute risk score bounds
-  const riskScoreBounds = useMemo(() => {
-    const values = orders.map((o) => o.riskScore).filter((v) => !isNaN(v));
-    if (values.length === 0) return { min: 0, max: 100 };
-    return { min: Math.floor(Math.min(...values)), max: Math.ceil(Math.max(...values)) };
-  }, [orders]);
 
   const toggleSort = (key: SortKey) => {
     if (sortBy === key) {
@@ -289,7 +434,6 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   const filtered = useMemo(() => {
     let result = [...orders];
 
-    // Text search
     if (search) {
       const q = search.toLowerCase();
       result = result.filter((o) => {
@@ -300,161 +444,82 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       });
     }
 
-    // Column filters: checkbox filters
-    if (statusFilter.size > 0) {
-      result = result.filter((o) => statusFilter.has(o.status));
-    }
-    if (plantFilter.size > 0) {
-      result = result.filter((o) => plantFilter.has(o.plant));
-    }
-    if (customerFilter.size > 0) {
-      result = result.filter((o) => customerFilter.has(o.customer));
-    }
-    if (materialFilter.size > 0) {
-      result = result.filter((o) => materialFilter.has(o.material));
-    }
-    if (salesOrderFilter.size > 0) {
-      result = result.filter((o) => salesOrderFilter.has(o.salesOrder));
-    }
-    if (businessUnitFilter.size > 0) {
-      const key = "division of business name";
-      result = result.filter((o) => {
-        const bu = (o.rawData?.[key] ?? "").trim();
-        return businessUnitFilter.has(bu);
-      });
-    }
-
-    // Column filters: range filters
-    if (leadTimeMin !== undefined) {
+    // Lead time preset filter
+    if (leadTimePreset) {
       result = result.filter((o) => {
         const lt = parseInt(o.leadTime, 10);
-        return !isNaN(lt) && lt >= leadTimeMin;
-      });
-    }
-    if (leadTimeMax !== undefined) {
-      result = result.filter((o) => {
-        const lt = parseInt(o.leadTime, 10);
-        return !isNaN(lt) && lt <= leadTimeMax;
+        if (isNaN(lt)) return true;
+        if (leadTimePreset === `lt_${LEAD_TIME_THRESHOLD}`) return lt < LEAD_TIME_THRESHOLD;
+        if (leadTimePreset === `gte_${LEAD_TIME_THRESHOLD}`) return lt >= LEAD_TIME_THRESHOLD;
+        return true;
       });
     }
 
-    if (riskScoreMin !== undefined) {
-      result = result.filter((o) => o.riskScore >= riskScoreMin);
-    }
-    if (riskScoreMax !== undefined) {
-      result = result.filter((o) => o.riskScore <= riskScoreMax);
-    }
-    if (soDateStart) {
-      const start = new Date(soDateStart);
+    // Dynamic checkbox filters
+    for (const [key, selected] of Object.entries(checkboxFilters)) {
+      if (selected.size === 0) continue;
       result = result.filter((o) => {
-        const d = new Date(o.soCreateDate);
-        return !isNaN(d.getTime()) && d >= start;
-      });
-    }
-    if (soDateEnd) {
-      const end = new Date(soDateEnd);
-      end.setHours(23, 59, 59, 999);
-      result = result.filter((o) => {
-        const d = new Date(o.soCreateDate);
-        return !isNaN(d.getTime()) && d <= end;
+        const val = String(getCellValue(o, key)).trim();
+        return selected.has(val);
       });
     }
 
-    // Sorting
+    // Dynamic range filters
+    for (const [key, range] of Object.entries(rangeFilters)) {
+      result = result.filter((o) => {
+        const raw = String(getCellValue(o, key));
+        const n = parseNumeric(raw);
+        if (isNaN(n)) return true;
+        if (range.min !== undefined && n < range.min) return false;
+        if (range.max !== undefined && n > range.max) return false;
+        return true;
+      });
+    }
+
+    // Dynamic date filters
+    for (const [key, range] of Object.entries(dateFilters)) {
+      if (range.start) {
+        const start = new Date(range.start);
+        result = result.filter((o) => {
+          const raw = String(getCellValue(o, key));
+          const d = new Date(raw);
+          return isNaN(d.getTime()) || d >= start;
+        });
+      }
+      if (range.end) {
+        const end = new Date(range.end);
+        end.setHours(23, 59, 59, 999);
+        result = result.filter((o) => {
+          const raw = String(getCellValue(o, key));
+          const d = new Date(raw);
+          return isNaN(d.getTime()) || d <= end;
+        });
+      }
+    }
+
     if (sortBy) {
       result.sort((a, b) => {
-        let aVal: string | number = a[sortBy] ?? "";
-        let bVal: string | number = b[sortBy] ?? "";
-        if (sortBy === "riskScore") {
-          aVal = a.riskScore;
-          bVal = b.riskScore;
+        let aVal: string | number = getCellValue(a, sortBy);
+        let bVal: string | number = getCellValue(b, sortBy);
+        const aNum = typeof aVal === "number" ? aVal : parseNumeric(String(aVal));
+        const bNum = typeof bVal === "number" ? bVal : parseNumeric(String(bVal));
+        if (!isNaN(aNum) && !isNaN(bNum)) {
+          return sortDir === "asc" ? aNum - bNum : bNum - aNum;
         }
-        if (typeof aVal === "string") aVal = aVal.toLowerCase();
-        if (typeof bVal === "string") bVal = bVal.toLowerCase();
-        if (aVal < bVal) return sortDir === "asc" ? -1 : 1;
-        if (aVal > bVal) return sortDir === "asc" ? 1 : -1;
+        const aStr = String(aVal).toLowerCase();
+        const bStr = String(bVal).toLowerCase();
+        if (aStr < bStr) return sortDir === "asc" ? -1 : 1;
+        if (aStr > bStr) return sortDir === "asc" ? 1 : -1;
         return 0;
       });
     }
     return result;
-  }, [orders, search, sortBy, sortDir, statusFilter, plantFilter, customerFilter, materialFilter, salesOrderFilter, businessUnitFilter, leadTimeMin, leadTimeMax, riskScoreMin, riskScoreMax, soDateStart, soDateEnd]);
+  }, [orders, search, sortBy, sortDir, checkboxFilters, rangeFilters, dateFilters, leadTimePreset]);
 
-  // Reset page when filters change
   useMemo(() => setPage(1), [filtered.length]);
 
   const totalPages = Math.ceil(filtered.length / pageSize);
   const pageOrders = filtered.slice((page - 1) * pageSize, page * pageSize);
-
-  const handleExport = () => {
-    const headerRow = visibleColumnKeys.map((k) => getColumnDisplayName(k)).join(",");
-    const escape = (v: string) => (/[,"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
-    const rows = filtered.map((o) =>
-      visibleColumnKeys.map((key) => {
-        const val = key === "riskSignals" ? getRiskSignals(o) : getCellValue(o, key);
-        return escape(String(val ?? ""));
-      }).join(",")
-    ).join("\n");
-    const blob = new Blob([headerRow + "\n" + rows], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "otif_orders_export.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  // Human-readable labels for SHAP feature names
-  const SHAP_FEATURE_LABELS: Record<string, string> = {
-    f_so_to_rdd_days: "Order-to-Delivery Window",
-    f_so_to_mat_avail_days: "Days Until Material Ready",
-    f_mat_avail_to_rdd_days: "Material-to-Delivery Buffer",
-    f_mat_ready_after_rdd: "Late Material Flag",
-    f_request_lead_days: "Customer Requested Lead Time",
-    f_material_lead_days: "Material Supply Lead Time",
-    f_lead_gap_days: "Supply Cushion Days",
-    f_tight_ratio: "Timeline Tightness Ratio",
-    f_is_tight_order: "Tight Order Flag",
-    f_is_extremely_tight: "Critical Timeline Flag",
-    f_critical_negative_gap: "Severe Delay Risk Flag",
-    f_mild_negative_gap: "Minor Delay Risk Flag",
-    f_large_positive_gap: "Comfortable Buffer Flag",
-    f_gap_bin: "Low Buffer Quartile Flag",
-    f_unit_price_log: "Unit Price (Log)",
-    f_so_woy_sin: "Order Week Seasonality (Sin)",
-    f_so_woy_cos: "Order Week Seasonality (Cos)",
-    f_rdd_woy_sin: "Delivery Week Seasonality (Sin)",
-    f_rdd_woy_cos: "Delivery Week Seasonality (Cos)",
-    f_qty_log: "Order Volume (Log)",
-    f_high_qty_flag: "Large Order Flag",
-    f_high_value_flag: "High Value Order Flag",
-    f_high_value_x_tight: "High Value + Tight Timeline",
-    f_tolerance_band: "Delivery Quantity Tolerance",
-    f_strict_tolerance: "Strict Tolerance Customer",
-    f_strict_x_tight: "Strict Customer + Tight Deadline",
-    f_tolerance_x_gap: "Gap Exceeds Tolerance",
-    f_plant_orders_7d: "Plant Load (7 Days)",
-    f_plant_orders_30d: "Plant Load (30 Days)",
-    f_material_orders_7d: "Material Demand (7 Days)",
-    f_material_orders_30d: "Material Demand (30 Days)",
-    f_shipto_orders_7d: "Customer Site Volume (7 Days)",
-    f_shipto_orders_30d: "Customer Site Volume (30 Days)",
-    f_mat_total_orders_log: "Material Order Frequency (Log)",
-    f_gap_x_load: "Buffer Under Plant Pressure",
-    f_tight_x_plant_load: "Tight Order at Busy Plant",
-    f_mat_shipto_x_pressure: "Material + Customer Risk Pressure",
-    f_customer_miss_rate: "Customer OTIF Miss Rate",
-    f_material_miss_rate: "Material OTIF Miss Rate",
-    f_plant_miss_rate: "Plant OTIF Miss Rate",
-    f_bu_miss_rate: "Business Unit OTIF Miss Rate",
-    f_mat_shipto_miss_rate: "Material × Customer Miss Rate",
-    f_plant_material_miss_rate: "Material × Plant Miss Rate",
-    f_plant_shipto_miss_rate: "Plant × Customer Miss Rate",
-    f_state_miss_rate: "Regional OTIF Miss Rate",
-    f_strict_x_plant_miss: "Strict Customer at Weak Plant",
-    f_high_plant_risk: "High Risk Plant Flag",
-    f_risk_stack: "Compounded Risk Flag",
-    f_otif_risk_score: "Overall OTIF Risk Score",
-  };
 
   const translateFeatureName = (name: string): string => {
     const key = name.trim().toLowerCase();
@@ -477,6 +542,100 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     return signals.join("; ");
   };
 
+  const handleExport = () => {
+    const headerRow = visibleColumnKeys.map((k) => getColumnDisplayName(k)).join(",");
+    const escape = (v: string) => (/[,"\n]/.test(v) ? `"${v.replace(/"/g, '""')}"` : v);
+    const rows = filtered
+      .map((o) =>
+        visibleColumnKeys
+          .map((key) => {
+            const val = key === "riskSignals" ? getRiskSignals(o) : getCellValue(o, key);
+            return escape(String(val ?? ""));
+          })
+          .join(",")
+      )
+      .join("\n");
+    const blob = new Blob([headerRow + "\n" + rows], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "otif_orders_export.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const renderColumnFilter = (key: string) => {
+    const filterType = getColumnFilterType(key);
+    const label = getColumnDisplayName(key);
+
+    if (filterType === "leadtime") {
+      return (
+        <ColumnFilterSelect
+          label={label}
+          options={[
+            { value: `lt_${LEAD_TIME_THRESHOLD}`, label: `Less than ${LEAD_TIME_THRESHOLD} days` },
+            { value: `gte_${LEAD_TIME_THRESHOLD}`, label: `${LEAD_TIME_THRESHOLD} days or more` },
+          ]}
+          selected={leadTimePreset}
+          onChange={setLeadTimePreset}
+        />
+      );
+    }
+
+    if (filterType === "checkbox") {
+      const uniqueVals = getUniqueValues(key);
+      if (uniqueVals.length === 0) return null;
+      return (
+        <ColumnFilterCheckbox
+          label={label}
+          options={uniqueVals}
+          selected={checkboxFilters[key] ?? new Set()}
+          onChange={(val) => setCheckboxFilter(key, val)}
+        />
+      );
+    }
+
+    if (filterType === "range") {
+      const bounds = getRangeBounds(key);
+      const current = rangeFilters[key];
+      return (
+        <ColumnFilterRange
+          label={label}
+          min={bounds.min}
+          max={bounds.max}
+          currentMin={current?.min}
+          currentMax={current?.max}
+          onChange={(min, max) => setRangeFilter(key, min, max)}
+          unit={key === "riskScore" ? "%" : ""}
+        />
+      );
+    }
+
+    if (filterType === "date") {
+      const current = dateFilters[key];
+      return (
+        <ColumnFilterDate
+          label={label}
+          currentStart={current?.start}
+          currentEnd={current?.end}
+          onChange={(start, end) => setDateFilter(key, start, end)}
+        />
+      );
+    }
+
+    return null;
+  };
+
+  const activeFilterCount = useMemo(() => {
+    let count = 0;
+    count += Object.keys(checkboxFilters).length;
+    count += Object.keys(rangeFilters).length;
+    count += Object.keys(dateFilters).length;
+    if (leadTimePreset) count++;
+    if (search) count++;
+    return count;
+  }, [checkboxFilters, rangeFilters, dateFilters, leadTimePreset, search]);
+
   return (
     <div className="rounded-xl border bg-card shadow-sm animate-fade-in">
       <div className="flex items-center justify-between border-b px-6 py-4">
@@ -493,6 +652,32 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
             <DropdownMenuContent align="end" className="w-72 p-0">
               <div className="p-2 border-b">
                 <p className="text-xs font-medium text-muted-foreground px-2">Show / hide and reorder columns</p>
+                <div className="flex items-center gap-1 mt-2 px-2">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={selectAllColumns}
+                  >
+                    Select All
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={deselectAllColumns}
+                  >
+                    Deselect All
+                  </Button>
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-6 px-2 text-[11px]"
+                    onClick={resetToDefaultColumns}
+                  >
+                    Default
+                  </Button>
+                </div>
               </div>
               <ScrollArea className="h-[280px]">
                 <div className="p-2 space-y-0.5">
@@ -548,11 +733,13 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="mr-1.5 h-3.5 w-3.5" /> Export
           </Button>
-
-
-
           <Button variant="ghost" size="sm" onClick={clearAllFilters} title="Clear all filters">
             <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Clear Filters
+            {activeFilterCount > 0 && (
+              <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground">
+                {activeFilterCount}
+              </span>
+            )}
           </Button>
         </div>
       </div>
@@ -569,6 +756,12 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           Showing {pageOrders.length} of {filtered.length} orders
+          {leadTimePreset === `lt_${LEAD_TIME_THRESHOLD}` && (
+            <span className="ml-2 text-primary font-medium">(Lead Time &lt; {LEAD_TIME_THRESHOLD} days)</span>
+          )}
+          {leadTimePreset === `gte_${LEAD_TIME_THRESHOLD}` && (
+            <span className="ml-2 text-primary font-medium">(Lead Time &ge; {LEAD_TIME_THRESHOLD} days)</span>
+          )}
         </p>
       </div>
 
@@ -578,17 +771,6 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
             <tr>
               {visibleColumnKeys.map((key) => {
                 const label = getColumnDisplayName(key);
-                const isSalesOrder = key === "sales order" || key === "sales_order";
-                const isCustomer = key === "customer name" || key === "customer" || key === "customer_name";
-                const isBusinessUnits = key === "division of business name";
-                const isMaterial = key === "material";
-                const isPlant = key === "plant";
-                const isReqDelivery = key === "requested delivery date" || key === "req_delivery" || key === "requested_delivery_date";
-                const isLeadTime = key === "leadTime";
-                const isRiskScore = key === "riskScore";
-                const isStatus = key === "status" || key === "otif_hit/miss" || key === "otif_hit";
-                const sortKey: SortKey | null =
-                  isSalesOrder ? "salesOrder" : isCustomer ? "customer" : isMaterial ? "material" : isPlant ? "plant" : isReqDelivery ? "reqDelivery" : isRiskScore ? "riskScore" : isStatus ? "status" : null;
                 const width = columnWidths[key];
                 return (
                   <th
@@ -597,17 +779,9 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                     onDragStart={(e) => {
                       draggingKeyRef.current = key;
                       e.dataTransfer.effectAllowed = "move";
-                      try {
-                        e.dataTransfer.setData("text/plain", key);
-                      } catch {
-                        // ignore
-                      }
+                      try { e.dataTransfer.setData("text/plain", key); } catch { /* ignore */ }
                     }}
-                    onDragOver={(e) => {
-                      // allow drop
-                      e.preventDefault();
-                      e.dataTransfer.dropEffect = "move";
-                    }}
+                    onDragOver={(e) => { e.preventDefault(); e.dataTransfer.dropEffect = "move"; }}
                     onDrop={(e) => {
                       e.preventDefault();
                       const fromKey = draggingKeyRef.current ?? "";
@@ -619,68 +793,17 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                     title="Drag to reorder. Drag edge to resize."
                   >
                     <div className="flex items-center gap-0.5">
-                      {sortKey ? (
-                        <button
-                          onClick={() => toggleSort(sortKey)}
-                          className="flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground flex-1 text-left"
-                        >
-                          <span className="break-words whitespace-normal">{label}</span>
-                          <ArrowUpDown className="h-3 w-3 shrink-0" />
-                          {sortBy === sortKey && (
-                            <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${sortDir === "asc" ? "rotate-180" : ""}`} />
-                          )}
-                        </button>
-                      ) : (
-                        <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground flex-1 break-words whitespace-normal text-left">{label}</span>
-                      )}
-                      {isSalesOrder && (
-                        <ColumnFilterCheckbox label="Sales Order" options={uniqueSalesOrders} selected={salesOrderFilter} onChange={setSalesOrderFilter} />
-                      )}
-                      {isCustomer && (
-                        <ColumnFilterCheckbox label="Customer" options={uniqueCustomers} selected={customerFilter} onChange={setCustomerFilter} />
-                      )}
-                      {isBusinessUnits && (
-                        <ColumnFilterCheckbox label="Business Units" options={uniqueBusinessUnits} selected={businessUnitFilter} onChange={setBusinessUnitFilter} />
-                      )}
-                      {isMaterial && (
-                        <ColumnFilterCheckbox label="Material" options={uniqueMaterials} selected={materialFilter} onChange={setMaterialFilter} />
-                      )}
-                      {isPlant && (
-                        <ColumnFilterCheckbox label="Plant" options={uniquePlants} selected={plantFilter} onChange={setPlantFilter} />
-                      )}
-                      {isLeadTime && (
-                        <ColumnFilterRange
-                          label="Lead Time"
-                          min={0}
-                          max={30}
-                          currentMin={leadTimeMin}
-                          currentMax={leadTimeMax}
-                          onChange={(min, max) => { setLeadTimeMin(min); setLeadTimeMax(max); }}
-                          unit=" days"
-                        />
-                      )}
-                      {isRiskScore && (
-                        <ColumnFilterRange
-                          label="Risk Score"
-                          min={riskScoreBounds.min}
-                          max={riskScoreBounds.max}
-                          currentMin={riskScoreMin}
-                          currentMax={riskScoreMax}
-                          onChange={(min, max) => { setRiskScoreMin(min); setRiskScoreMax(max); }}
-                          unit="%"
-                        />
-                      )}
-                      {isStatus && (
-                        <ColumnFilterCheckbox label="Status" options={uniqueStatuses} selected={statusFilter} onChange={setStatusFilter} />
-                      )}
-                      {(key === "so create date" || key === "so_create_date") && (
-                        <ColumnFilterDate
-                          label="SO Creation Date"
-                          currentStart={soDateStart}
-                          currentEnd={soDateEnd}
-                          onChange={(start, end) => { setSoDateStart(start); setSoDateEnd(end); }}
-                        />
-                      )}
+                      <button
+                        onClick={() => toggleSort(key)}
+                        className="flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground flex-1 text-left"
+                      >
+                        <span className="break-words whitespace-normal">{label}</span>
+                        <ArrowUpDown className="h-3 w-3 shrink-0" />
+                        {sortBy === key && (
+                          <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${sortDir === "asc" ? "rotate-180" : ""}`} />
+                        )}
+                      </button>
+                      {renderColumnFilter(key)}
                     </div>
                     <div
                       role="separator"
@@ -747,11 +870,11 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between border-t px-6 py-3">
-          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage(p => p - 1)}>
+          <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
             Previous
           </Button>
           <span className="text-sm text-muted-foreground">Page {page} of {totalPages}</span>
-          <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage(p => p + 1)}>
+          <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
             Next
           </Button>
         </div>

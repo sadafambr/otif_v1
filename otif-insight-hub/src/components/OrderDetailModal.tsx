@@ -94,8 +94,8 @@ export function OrderDetailModal({ detail, loading, onClose }: OrderDetailModalP
                 </div>
               )}
 
-              {/* Risk Drivers */}
-              {detail.riskDrivers && detail.riskDrivers.length > 0 && (
+              {/* Risk Drivers - only shown for Miss predictions */}
+              {detail.prediction === "Miss" && detail.riskDrivers && detail.riskDrivers.length > 0 && (
                 <div>
                   <h4 className="mb-3 text-xs font-semibold uppercase tracking-wider text-muted-foreground">Risk Drivers</h4>
                   <div className="space-y-2">
@@ -112,7 +112,6 @@ export function OrderDetailModal({ detail, loading, onClose }: OrderDetailModalP
                           <span className="text-xs font-mono text-muted-foreground">{driver.value}</span>
                         </div>
                         <p className="mt-1 text-xs text-muted-foreground">{driver.explanation}</p>
-                        {/* SHAP bar */}
                         <div className="mt-2 flex items-center gap-2">
                           <div className="h-1.5 flex-1 rounded-full bg-muted">
                             <div

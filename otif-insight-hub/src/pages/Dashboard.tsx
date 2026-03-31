@@ -4,6 +4,7 @@ import { KPICard } from "@/components/KPICard";
 import { OTIFChart } from "@/components/OTIFChart";
 import { OrderTable } from "@/components/OrderTable";
 import { OrderDetailModal } from "@/components/OrderDetailModal";
+import { OTIFAnalyticsPanel } from "@/components/OTIFAnalyticsPanel";
 import { useDashboard, useOrderDetail } from "@/hooks/useOTIF";
 import { getDashboardData } from "@/lib/dataStore";
 import { fetchFavorites, saveFavorite, deleteFavorite, type FavoriteFilter } from "@/lib/api";
@@ -39,6 +40,7 @@ export default function Dashboard() {
   const countryDropdownRef = useRef<HTMLDivElement>(null);
   const [selectedOrder, setSelectedOrder] = useState<OTIFRecord | null>(null);
   const [filtersExpanded, setFiltersExpanded] = useState(false);
+  const [activeTab, setActiveTab] = useState<"dashboard" | "analytics">("dashboard");
 
   const { token } = useAuth();
   const [favorites, setFavorites] = useState<FavoriteFilter[]>([]);
@@ -272,6 +274,42 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* Tabs */}
+        <div className="mb-6 border-b">
+          <div className="flex">
+            <button
+              onClick={() => setActiveTab("dashboard")}
+              className={`relative px-5 py-3 text-sm font-medium transition-colors ${
+                activeTab === "dashboard"
+                  ? "text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              OTIF Risk Dashboard
+              {activeTab === "dashboard" && (
+                <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-primary" />
+              )}
+            </button>
+            <button
+              onClick={() => setActiveTab("analytics")}
+              className={`relative px-5 py-3 text-sm font-medium transition-colors ${
+                activeTab === "analytics"
+                  ? "text-primary"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              OTIF Prediction Analytics
+              {activeTab === "analytics" && (
+                <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-primary" />
+              )}
+            </button>
+          </div>
+        </div>
+
+        {activeTab === "analytics" ? (
+          <OTIFAnalyticsPanel orders={filteredOrders} />
+        ) : (
+        <>
         {/* Filters Section */}
         <div className="mb-6 relative z-10 rounded-xl border bg-card/50 backdrop-blur-sm">
           <button
@@ -537,6 +575,8 @@ export default function Dashboard() {
             loading={detailLoading}
             onClose={() => { setDetail(null); setSelectedOrder(null); }}
           />
+        )}
+        </>
         )}
       </div>
     </AppLayout>

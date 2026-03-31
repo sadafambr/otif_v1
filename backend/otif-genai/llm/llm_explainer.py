@@ -194,11 +194,11 @@ def generate_explanation(data):
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are an expert supply chain analyst. Your task is to explain the OTIF prediction for a single order in a concise, business-friendly paragraph. Your response must be a maximum of 50 tokens and exactly 3-4 sentences. Do not provide recommendations for UI/dashboards, just explain the risk drivers for this specific order."},
+            {"role": "system", "content": "You are an expert supply chain analyst. Your task is to explain the OTIF prediction for a single order in a concise, business-friendly paragraph. Your response must be a maximum of 100 tokens and exactly 3-4 sentences. Do not provide recommendations for UI/dashboards, just explain the risk drivers for this specific order."},
             {"role": "user", "content": prompt}
         ],
         temperature=0.2,
-        max_tokens=50,
+        max_tokens=100,
         timeout=15.0  # Prevent "stuck" loading states
     )
 
