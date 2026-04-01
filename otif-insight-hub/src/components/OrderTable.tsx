@@ -1,11 +1,11 @@
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { Search, Download, ArrowUpDown, ChevronDown, Columns2, ChevronUp, ArrowDown } from "lucide-react";
+import { Search, Download, ArrowUpDown, ChevronDown, Columns2, ChevronUp, ArrowDown, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ColumnFilterCheckbox } from "@/components/ColumnFilterCheckbox";
 import { ColumnFilterRange } from "@/components/ColumnFilterRange";
 import { ColumnFilterDate } from "@/components/ColumnFilterDate";
-import { ColumnFilterSelect } from "@/components/ColumnFilterSelect";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RotateCcw } from "lucide-react";
@@ -40,7 +40,6 @@ interface ColumnFilterState {
   checkboxFilters: Record<string, Set<string>>;
   rangeFilters: Record<string, { min?: number; max?: number }>;
   dateFilters: Record<string, { start?: string; end?: string }>;
-  leadTimePreset: string | undefined;
 }
 
 const COLUMN_LAYOUT_STORAGE_KEY = "otif.orderTable.columnLayout.v1";
@@ -326,7 +325,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   const [checkboxFilters, setCheckboxFilters] = useState<Record<string, Set<string>>>({});
   const [rangeFilters, setRangeFilters] = useState<Record<string, { min?: number; max?: number }>>({});
   const [dateFilters, setDateFilters] = useState<Record<string, { start?: string; end?: string }>>({});
-  const [leadTimePreset, setLeadTimePreset] = useState<string | undefined>(`lt_${LEAD_TIME_THRESHOLD}`);
+  const [leadTimeMode, setLeadTimeMode] = useState<"lt" | "gte">("lt");
 
   const columnTypeCache = useRef<Record<string, ColumnFilterType>>({});
 
@@ -414,7 +413,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     setCheckboxFilters({});
     setRangeFilters({});
     setDateFilters({});
-    setLeadTimePreset(`lt_${LEAD_TIME_THRESHOLD}`);
+    setLeadTimeMode("lt");
     setSearch("");
   };
 
@@ -444,16 +443,12 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       });
     }
 
-    // Lead time preset filter
-    if (leadTimePreset) {
-      result = result.filter((o) => {
-        const lt = parseInt(o.leadTime, 10);
-        if (isNaN(lt)) return true;
-        if (leadTimePreset === `lt_${LEAD_TIME_THRESHOLD}`) return lt < LEAD_TIME_THRESHOLD;
-        if (leadTimePreset === `gte_${LEAD_TIME_THRESHOLD}`) return lt >= LEAD_TIME_THRESHOLD;
-        return true;
-      });
-    }
+    // Lead time filter
+    result = result.filter((o) => {
+      const lt = parseInt(o.leadTime, 10);
+      if (isNaN(lt)) return true;
+      return leadTimeMode === "lt" ? lt < LEAD_TIME_THRESHOLD : lt >= LEAD_TIME_THRESHOLD;
+    });
 
     // Dynamic checkbox filters
     for (const [key, selected] of Object.entries(checkboxFilters)) {
@@ -514,7 +509,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       });
     }
     return result;
-  }, [orders, search, sortBy, sortDir, checkboxFilters, rangeFilters, dateFilters, leadTimePreset]);
+  }, [orders, search, sortBy, sortDir, checkboxFilters, rangeFilters, dateFilters, leadTimeMode]);
 
   useMemo(() => setPage(1), [filtered.length]);
 
@@ -569,16 +564,31 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     const label = getColumnDisplayName(key);
 
     if (filterType === "leadtime") {
+      const isNonDefault = leadTimeMode !== "lt";
       return (
-        <ColumnFilterSelect
-          label={label}
-          options={[
-            { value: `lt_${LEAD_TIME_THRESHOLD}`, label: `Less than ${LEAD_TIME_THRESHOLD} days` },
-            { value: `gte_${LEAD_TIME_THRESHOLD}`, label: `${LEAD_TIME_THRESHOLD} days or more` },
-          ]}
-          selected={leadTimePreset}
-          onChange={setLeadTimePreset}
-        />
+        <Popover>
+          <PopoverTrigger asChild>
+            <button className="ml-1 inline-flex items-center focus:outline-none shrink-0" title={`Filter ${label}`}>
+              <Filter className={`h-3 w-3 transition-colors ${isNonDefault ? "text-primary fill-primary" : "text-muted-foreground hover:text-foreground"}`} />
+            </button>
+          </PopoverTrigger>
+          <PopoverContent align="start" className="column-filter-popover w-52 p-0">
+            <div className="p-2 space-y-0.5">
+              <button
+                onClick={() => setLeadTimeMode("lt")}
+                className={`w-full text-left rounded px-3 py-2 text-sm transition-colors ${leadTimeMode === "lt" ? "bg-primary text-primary-foreground font-medium" : "hover:bg-muted/50"}`}
+              >
+                &lt; {LEAD_TIME_THRESHOLD} days
+              </button>
+              <button
+                onClick={() => setLeadTimeMode("gte")}
+                className={`w-full text-left rounded px-3 py-2 text-sm transition-colors ${leadTimeMode === "gte" ? "bg-primary text-primary-foreground font-medium" : "hover:bg-muted/50"}`}
+              >
+                &ge; {LEAD_TIME_THRESHOLD} days
+              </button>
+            </div>
+          </PopoverContent>
+        </Popover>
       );
     }
 
@@ -631,10 +641,10 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     count += Object.keys(checkboxFilters).length;
     count += Object.keys(rangeFilters).length;
     count += Object.keys(dateFilters).length;
-    if (leadTimePreset) count++;
+    if (leadTimeMode !== "lt") count++;
     if (search) count++;
     return count;
-  }, [checkboxFilters, rangeFilters, dateFilters, leadTimePreset, search]);
+  }, [checkboxFilters, rangeFilters, dateFilters, leadTimeMode, search]);
 
   return (
     <div className="rounded-xl border bg-card shadow-sm animate-fade-in">
@@ -756,12 +766,6 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
         </div>
         <p className="mt-2 text-xs text-muted-foreground">
           Showing {pageOrders.length} of {filtered.length} orders
-          {leadTimePreset === `lt_${LEAD_TIME_THRESHOLD}` && (
-            <span className="ml-2 text-primary font-medium">(Lead Time &lt; {LEAD_TIME_THRESHOLD} days)</span>
-          )}
-          {leadTimePreset === `gte_${LEAD_TIME_THRESHOLD}` && (
-            <span className="ml-2 text-primary font-medium">(Lead Time &ge; {LEAD_TIME_THRESHOLD} days)</span>
-          )}
         </p>
       </div>
 
