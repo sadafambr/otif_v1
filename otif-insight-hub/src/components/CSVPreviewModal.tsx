@@ -22,9 +22,9 @@ export function CSVPreviewModal({ filename, records, fileSize, onClose }: CSVPre
   );
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-foreground/40" onClick={onClose}>
+    <div className="glass-modal-backdrop fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div
-        className="relative mx-4 flex max-h-[85vh] w-full max-w-4xl flex-col rounded-xl bg-card shadow-2xl animate-fade-in"
+        className="glass-modal-panel relative mx-4 flex max-h-[85vh] w-full max-w-4xl flex-col animate-fade-in"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}

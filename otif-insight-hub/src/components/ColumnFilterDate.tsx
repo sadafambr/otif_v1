@@ -3,6 +3,7 @@ import { Filter, Calendar } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { cn } from "@/lib/utils";
 
 interface ColumnFilterDateProps {
     label: string;
@@ -47,13 +48,17 @@ export function ColumnFilterDate({
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
                 <button
-                    className="ml-1 inline-flex items-center focus:outline-none shrink-0"
+                    type="button"
                     title={`Filter ${label}`}
+                    className={cn(
+                        "order-table-filter-trigger",
+                        isActive
+                            ? "text-primary opacity-100"
+                            : "text-muted-foreground opacity-[0.38] hover:!opacity-100 hover:bg-muted/70 hover:text-foreground group-hover/header:opacity-[0.52]",
+                        "data-[state=open]:bg-muted/65 data-[state=open]:opacity-100 data-[state=open]:text-foreground",
+                    )}
                 >
-                    <Filter
-                        className={`h-3 w-3 transition-colors ${isActive ? "text-primary fill-primary" : "text-muted-foreground hover:text-foreground"
-                            }`}
-                    />
+                    <Filter className="h-2 w-2" strokeWidth={2.5} />
                 </button>
             </PopoverTrigger>
             <PopoverContent

@@ -4,6 +4,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
+import { cn } from "@/lib/utils";
 
 interface ColumnFilterCheckboxProps {
     label: string;
@@ -58,28 +59,32 @@ export function ColumnFilterCheckbox({ label, options, selected, onChange }: Col
         <Popover open={open} onOpenChange={setOpen}>
             <PopoverTrigger asChild>
                 <button
-                    className="ml-1 inline-flex items-center focus:outline-none shrink-0"
+                    type="button"
                     title={`Filter ${label}`}
+                    className={cn(
+                        "order-table-filter-trigger",
+                        isActive
+                            ? "text-primary opacity-100"
+                            : "text-muted-foreground opacity-[0.38] hover:!opacity-100 hover:bg-muted/70 hover:text-foreground group-hover/header:opacity-[0.52]",
+                        "data-[state=open]:bg-muted/65 data-[state=open]:opacity-100 data-[state=open]:text-foreground",
+                    )}
                 >
-                    <Filter
-                        className={`h-3 w-3 transition-colors ${isActive ? "text-primary fill-primary" : "text-muted-foreground hover:text-foreground"
-                            }`}
-                    />
+                    <Filter className="h-2 w-2" strokeWidth={2.5} />
                 </button>
             </PopoverTrigger>
             <PopoverContent
                 align="start"
-                className="column-filter-popover w-56 p-0"
+                className="column-filter-popover w-[min(18rem,calc(100vw-2rem))] max-w-none p-0"
                 onInteractOutside={() => setOpen(false)}
             >
-                <div className="p-3">
+                <div className="p-3 pb-2">
                     <Input
                         placeholder={`Search ${label}...`}
                         value={search}
                         onChange={(e) => setSearch(e.target.value)}
                         className="mb-2 h-8 text-sm border-primary/40 focus-visible:ring-primary/30"
                     />
-                    <div className="max-h-44 overflow-y-auto space-y-1">
+                    <div className="max-h-[min(50vh,20rem)] overflow-y-auto overflow-x-hidden space-y-0.5 pr-0.5">
                         {filteredOptions.length === 0 && (
                             <p className="text-xs text-muted-foreground py-2 text-center">No matches</p>
                         )}
@@ -93,7 +98,7 @@ export function ColumnFilterCheckbox({ label, options, selected, onChange }: Col
                                     onCheckedChange={() => toggleOption(option)}
                                     className="data-[state=checked]:bg-primary data-[state=checked]:border-primary"
                                 />
-                                <span className="truncate">{option}</span>
+                                <span className="min-w-0 break-all text-left">{option}</span>
                             </label>
                         ))}
                     </div>

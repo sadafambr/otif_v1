@@ -32,7 +32,12 @@ export function KPICard({ label, value, description, icon: Icon, variant = "defa
           <p className="mt-0.5 text-2xl font-bold tracking-tight text-foreground">{value}</p>
           <p className="mt-0.5 text-[10px] text-muted-foreground/70 line-clamp-1">{description}</p>
         </div>
-        <div className={cn("rounded-full p-1.5 bg-background/20 backdrop-blur-sm", iconVariantStyles[variant])}>
+        <div
+          className={cn(
+            "rounded-full bg-background/25 p-1.5 backdrop-blur-sm transition-[background-color,transform] duration-300 ease-out",
+            iconVariantStyles[variant],
+          )}
+        >
           <Icon className="h-4 w-4" />
         </div>
       </div>

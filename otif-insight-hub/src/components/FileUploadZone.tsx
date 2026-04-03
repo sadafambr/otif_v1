@@ -48,8 +48,8 @@ export function FileUploadZone({ onFileSelect, accept = ".csv", disabled, isLoad
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       className={cn(
-        "flex cursor-pointer flex-col items-center justify-center rounded-xl border-2 border-dashed p-12 transition-colors",
-        isDragOver ? "border-primary bg-primary/5" : "border-border hover:border-primary/40",
+        "glass-upload-zone flex cursor-pointer flex-col items-center justify-center p-12",
+        isDragOver && "border-primary scale-[1.01] bg-primary/10 shadow-md",
         disabled && "pointer-events-none opacity-50"
       )}
     >

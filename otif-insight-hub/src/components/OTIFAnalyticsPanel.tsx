@@ -129,7 +129,7 @@ const HIGH_RISK_THRESHOLD = 75;
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border bg-card px-3 py-2 shadow-md text-sm">
+    <div className="glass-popover rounded-lg px-3 py-2 text-sm shadow-md">
       <p className="font-medium text-foreground mb-1">{payload[0]?.payload?.fullName ?? label}</p>
       {payload.map((entry: any, i: number) => (
         <p key={i} className="text-xs" style={{ color: entry.color }}>
@@ -143,7 +143,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 const MissRateTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
   return (
-    <div className="rounded-lg border bg-card px-3 py-2 shadow-md text-sm">
+    <div className="glass-popover rounded-lg px-3 py-2 text-sm shadow-md">
       <p className="font-medium text-foreground mb-1">{payload[0]?.payload?.fullName ?? label}</p>
       <p className="text-xs text-amber-600">Miss Rate: {payload[0]?.value}%</p>
       <p className="text-xs text-muted-foreground">Miss: {payload[0]?.payload?.miss} / Total: {payload[0]?.payload?.total}</p>
@@ -267,7 +267,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
             const Icon = dim.icon;
             const ranking = topMissRankings[dim.id] || [];
             return (
-              <div key={dim.id} className="rounded-xl border bg-card p-4 shadow-sm">
+              <div key={dim.id} className="analytics-glass-card p-4">
                 <div className="flex items-center justify-between mb-4">
                   <h4 className="text-sm font-semibold text-foreground">Top Miss by {dim.label}</h4>
                   <Icon className="h-4 w-4 text-muted-foreground" />
@@ -293,7 +293,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
       </div>
 
       {/* OTIF Miss Rate by Dimension */}
-      <div className="rounded-xl border bg-card p-5 shadow-sm">
+      <div className="analytics-glass-card p-5">
         <div className="mb-4 flex items-center justify-between">
           <div>
             <h3 className="text-base font-semibold text-foreground">OTIF Miss Rate by Dimension</h3>
@@ -302,13 +302,13 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
           <div className="relative">
             <button
               onClick={() => setMissRateDropdownOpen((prev) => !prev)}
-              className="flex items-center gap-2 rounded-lg border bg-card px-3 py-1.5 text-sm font-medium text-foreground hover:bg-muted/50 transition-colors min-w-[140px] justify-between"
+              className="glass-popover flex min-w-[140px] items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-foreground transition-all duration-200 hover:bg-muted/40"
             >
               By {missRateDimConfig.label}
               <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${missRateDropdownOpen ? "rotate-180" : ""}`} />
             </button>
             {missRateDropdownOpen && (
-              <div className="absolute right-0 top-full z-50 mt-1 w-48 rounded-lg border bg-card shadow-lg overflow-hidden">
+              <div className="glass-popover absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg shadow-lg">
                 {MISS_DIMENSIONS.map((dim) => (
                   <button
                     key={dim.id}
@@ -337,7 +337,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
 
       {/* Miss Volume Pie + Detailed Breakdown Table */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
+        <div className="analytics-glass-card p-5">
           <div className="mb-1">
             <h3 className="text-base font-semibold text-foreground">Miss Volume Distribution</h3>
             <p className="text-xs text-muted-foreground">By {missRateDimConfig.label}</p>
@@ -364,14 +364,14 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
           </ResponsiveContainer>
         </div>
 
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
+        <div className="analytics-glass-card p-5">
           <div className="mb-4">
             <h3 className="text-base font-semibold text-foreground">Detailed Breakdown</h3>
             <p className="text-xs text-muted-foreground">By {missRateDimConfig.label}</p>
           </div>
           <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-card">
+              <thead className="sticky top-0 z-10 bg-muted backdrop-blur-md">
                 <tr className="border-b">
                   <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">{missRateDimConfig.label}</th>
                   <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Total</th>
@@ -399,7 +399,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
       </div>
 
       {/* High Risk Miss Orders */}
-      <div className="rounded-xl border bg-card p-5 shadow-sm">
+      <div className="analytics-glass-card p-5">
         <div className="mb-4 flex items-center gap-2">
           <AlertTriangle className="h-4 w-4 text-destructive" />
           <div>
@@ -414,7 +414,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
         ) : (
           <div className="overflow-x-auto max-h-[360px] overflow-y-auto">
             <table className="w-full text-sm">
-              <thead className="sticky top-0 bg-card">
+              <thead className="sticky top-0 z-10 bg-muted backdrop-blur-md">
                 <tr className="border-b">
                   <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Sales Order</th>
                   <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Customer</th>
@@ -454,7 +454,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
 
       {/* Hit/Miss Pie + Lead Time Distribution */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
+        <div className="analytics-glass-card p-5">
           <div className="mb-4 flex items-center gap-2">
             <PieChartIcon className="h-4 w-4 text-muted-foreground" />
             <h3 className="text-sm font-semibold text-foreground">Hit vs Miss Distribution</h3>
@@ -481,7 +481,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
           </ResponsiveContainer>
         </div>
 
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
+        <div className="analytics-glass-card p-5">
           <div className="mb-4 flex items-center gap-2">
             <Activity className="h-4 w-4 text-muted-foreground" />
             <h3 className="text-sm font-semibold text-foreground">Lead Time Distribution</h3>
@@ -502,7 +502,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
 
       {/* Hit/Miss by Dimension + Risk Score Distribution */}
       <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
+        <div className="analytics-glass-card p-5">
           <div className="mb-4 flex items-center justify-between">
             <div className="flex items-center gap-2">
               <BarChart3 className="h-4 w-4 text-muted-foreground" />
@@ -539,7 +539,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
           </ResponsiveContainer>
         </div>
 
-        <div className="rounded-xl border bg-card p-5 shadow-sm">
+        <div className="analytics-glass-card p-5">
           <div className="mb-4 flex items-center gap-2">
             <TrendingUp className="h-4 w-4 text-muted-foreground" />
             <h3 className="text-sm font-semibold text-foreground">Risk Score Distribution</h3>
@@ -561,7 +561,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
       </div>
 
       {/* Miss Rate by dimension table */}
-      <div className="rounded-xl border bg-card p-5 shadow-sm">
+      <div className="analytics-glass-card p-5">
         <div className="mb-4 flex items-center gap-2">
           <TrendingDown className="h-4 w-4 text-muted-foreground" />
           <h3 className="text-sm font-semibold text-foreground">
@@ -622,7 +622,7 @@ function StatCard({
   accent?: string;
 }) {
   return (
-    <div className="rounded-xl border bg-card p-4 shadow-sm">
+    <div className="analytics-glass-card p-4">
       <div className="flex items-center gap-2 mb-1">
         <Icon className="h-3.5 w-3.5 text-muted-foreground" />
         <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</p>

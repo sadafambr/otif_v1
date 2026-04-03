@@ -11,6 +11,14 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { RotateCcw } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { getDisplayName, DEFAULT_COLUMN_KEYS, resolveDefaultColumn } from "@/lib/columnMapping";
+
+/** Raw column keys that represent sales order / SO id (numeric IDs → checkbox, not range). */
+function isSalesOrderColumnKey(key: string, availableColumnKeys: string[]): boolean {
+  const k = key.trim().toLowerCase();
+  if (k === "sales order" || k === "sales_order" || k === "salesorder") return true;
+  return resolveDefaultColumn("sales order", availableColumnKeys) === key;
+}
+import { cn } from "@/lib/utils";
 import type { OTIFRecord } from "@/types/otif";
 
 const COMPUTED_COLUMN_KEYS = ["leadTime", "riskScore", "status", "riskSignals"] as const;
@@ -335,6 +343,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       if (key === "riskScore") return "range";
       if (key === "status") return "checkbox";
       if (key === "riskSignals") return "checkbox";
+      if (isSalesOrderColumnKey(key, availableColumnKeys)) return "checkbox";
 
       if (columnTypeCache.current[key]) return columnTypeCache.current[key];
 
@@ -343,7 +352,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       columnTypeCache.current[key] = detected;
       return detected;
     },
-    [orders]
+    [orders, availableColumnKeys]
   );
 
   const getUniqueValues = useCallback(
@@ -353,9 +362,20 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
         const v = String(getCellValue(o, key)).trim();
         if (v) vals.add(v);
       }
-      return [...vals].sort();
+      const arr = [...vals];
+      if (isSalesOrderColumnKey(key, availableColumnKeys)) {
+        arr.sort((a, b) => {
+          const na = Number(a.replace(/,/g, ""));
+          const nb = Number(b.replace(/,/g, ""));
+          if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+          return a.localeCompare(b);
+        });
+      } else {
+        arr.sort();
+      }
+      return arr;
     },
-    [orders]
+    [orders, availableColumnKeys]
   );
 
   const getRangeBounds = useCallback(
@@ -408,6 +428,20 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       return { ...prev, [key]: { start, end } };
     });
   }, []);
+
+  const columnHasActiveFilter = useCallback(
+    (key: string): boolean => {
+      if (key === "leadTime") return leadTimeMode !== "lt";
+      const cb = checkboxFilters[key];
+      if (cb && cb.size > 0) return true;
+      const rng = rangeFilters[key];
+      if (rng && (rng.min !== undefined || rng.max !== undefined)) return true;
+      const dt = dateFilters[key];
+      if (dt && (dt.start || dt.end)) return true;
+      return false;
+    },
+    [leadTimeMode, checkboxFilters, rangeFilters, dateFilters]
+  );
 
   const clearAllFilters = () => {
     setCheckboxFilters({});
@@ -568,8 +602,18 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       return (
         <Popover>
           <PopoverTrigger asChild>
-            <button className="ml-1 inline-flex items-center focus:outline-none shrink-0" title={`Filter ${label}`}>
-              <Filter className={`h-3 w-3 transition-colors ${isNonDefault ? "text-primary fill-primary" : "text-muted-foreground hover:text-foreground"}`} />
+            <button
+              type="button"
+              className={cn(
+                "order-table-filter-trigger",
+                isNonDefault
+                  ? "text-primary opacity-100"
+                  : "text-muted-foreground opacity-[0.38] hover:!opacity-100 hover:bg-muted/70 hover:text-foreground group-hover/header:opacity-[0.52]",
+                "data-[state=open]:bg-muted/65 data-[state=open]:opacity-100 data-[state=open]:text-foreground",
+              )}
+              title={`Filter ${label}`}
+            >
+              <Filter className="h-2 w-2" strokeWidth={2.5} />
             </button>
           </PopoverTrigger>
           <PopoverContent align="start" className="column-filter-popover w-52 p-0">
@@ -647,7 +691,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   }, [checkboxFilters, rangeFilters, dateFilters, leadTimeMode, search]);
 
   return (
-    <div className="rounded-xl border bg-card shadow-sm animate-fade-in">
+    <div className="glass-table-panel animate-fade-in">
       <div className="flex items-center justify-between border-b px-6 py-4">
         <div>
           <h3 className="text-lg font-semibold text-foreground">Order-Level OTIF Assessment</h3>
@@ -776,6 +820,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
               {visibleColumnKeys.map((key) => {
                 const label = getColumnDisplayName(key);
                 const width = columnWidths[key];
+                const showHeaderChrome = sortBy === key || columnHasActiveFilter(key);
                 return (
                   <th
                     key={key}
@@ -792,22 +837,43 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                       if (fromKey) reorderColumns(fromKey, key);
                       draggingKeyRef.current = null;
                     }}
-                    className="sticky top-0 z-10 bg-card pb-3 pt-3 pr-6 text-left border-b border-border/70 relative select-none"
+                    className="group/header relative sticky top-0 z-10 border-y border-border/60 bg-muted/40 py-1.5 pl-2 pr-3 text-left align-middle dark:bg-muted/30 select-none"
                     style={width ? { width: `${width}px`, minWidth: `${width}px`, maxWidth: `${width}px` } : undefined}
-                    title="Drag to reorder. Drag edge to resize."
+                    title={`${label} — Drag to reorder; drag right edge to resize.`}
                   >
-                    <div className="flex items-center gap-0.5">
-                      <button
-                        onClick={() => toggleSort(key)}
-                        className="flex items-center gap-1 text-xs font-medium uppercase tracking-wider text-muted-foreground hover:text-foreground flex-1 text-left"
-                      >
-                        <span className="break-words whitespace-normal">{label}</span>
-                        <ArrowUpDown className="h-3 w-3 shrink-0" />
-                        {sortBy === key && (
-                          <ChevronDown className={`h-3 w-3 shrink-0 transition-transform ${sortDir === "asc" ? "rotate-180" : ""}`} />
+                    <div className="flex min-w-0 items-center justify-between gap-1.5">
+                      <span className="min-w-0 flex-1 overflow-hidden text-ellipsis whitespace-nowrap text-[10px] font-semibold uppercase leading-tight tracking-wide text-muted-foreground">
+                        {label}
+                      </span>
+                      <div
+                        className={cn(
+                          "flex shrink-0 items-center justify-end gap-px transition-opacity duration-200 ease-out",
+                          showHeaderChrome
+                            ? "opacity-100"
+                            : "opacity-0 group-hover/header:opacity-100 focus-within:opacity-100 has-[button[data-state=open]]:opacity-100",
                         )}
-                      </button>
-                      {renderColumnFilter(key)}
+                      >
+                        <button
+                          type="button"
+                          onClick={() => toggleSort(key)}
+                          title="Sort column"
+                          className={cn(
+                            "inline-flex h-6 min-w-[1.375rem] items-center justify-center gap-px rounded px-0.5 transition-all duration-200 ease-out focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/45",
+                            sortBy === key
+                              ? "bg-primary/12 text-primary"
+                              : "text-muted-foreground opacity-70 hover:opacity-100 hover:bg-muted/60 hover:text-foreground",
+                          )}
+                        >
+                          <ArrowUpDown className="h-2 w-2 shrink-0" strokeWidth={2.5} />
+                          {sortBy === key && (
+                            <ChevronDown
+                              className={cn("h-2 w-2 shrink-0 transition-transform duration-200", sortDir === "asc" ? "rotate-180" : "")}
+                              strokeWidth={2.5}
+                            />
+                          )}
+                        </button>
+                        {renderColumnFilter(key)}
+                      </div>
                     </div>
                     <div
                       role="separator"
@@ -824,7 +890,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                       className="absolute right-0 top-0 h-full w-2 cursor-col-resize group"
                       title="Drag to resize"
                     >
-                      <div className="mx-auto h-full w-px bg-border/70 group-hover:bg-border" />
+                      <div className="mx-auto h-full w-px bg-border group-hover:bg-muted-foreground/40" />
                     </div>
                   </th>
                 );
@@ -835,7 +901,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
             {pageOrders.map((o) => (
               <tr
                 key={o.salesOrder + o.rowNum}
-                className="cursor-pointer hover:bg-muted/30 transition-colors"
+                className="cursor-pointer transition-[background-color] duration-200 ease-out hover:bg-muted/40"
                 onClick={() => onOrderClick(o)}
               >
                 {visibleColumnKeys.map((key) => {
@@ -847,7 +913,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                   return (
                     <td
                       key={key}
-                      className={`py-3.5 pr-4 text-left border-b border-border/60 align-top ${
+                      className={`py-3 pr-4 text-left border-b border-border/50 align-top ${
                         isSalesOrder ? "font-medium text-primary" : ""
                       } ${
                         key === "riskSignals" ? "max-w-[260px] text-xs text-muted-foreground" : "break-words whitespace-normal"

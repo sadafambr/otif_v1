@@ -16,7 +16,7 @@ export function FileCard({ file, onPreview, onLoadToDashboard, onDelete }: FileC
   });
 
   return (
-    <div className="flex items-center justify-between rounded-xl border bg-card p-4 shadow-sm animate-fade-in">
+    <div className="glass-surface glass-surface-ring flex animate-fade-in items-center justify-between rounded-xl p-4 shadow-sm transition-[box-shadow,transform] duration-300 ease-out hover:shadow-lg">
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-primary/10 text-primary">
           <FileSpreadsheet className="h-5 w-5" />

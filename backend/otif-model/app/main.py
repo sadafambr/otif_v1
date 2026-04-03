@@ -173,7 +173,7 @@ def main():
 
     tab1, tab2, tab3, tab4 = st.tabs([
         "📊 Model Dashboard", 
-        "🔍 XAI SHAP Explaination", 
+        "🔍 XAI SHAP Explanation", 
         "📥 Custom Prediction",
         "⚙️ Data Management"
     ])

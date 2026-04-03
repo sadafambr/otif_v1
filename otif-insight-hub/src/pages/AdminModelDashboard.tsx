@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useId } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { useAuth } from "@/hooks/useAuth";
 import { useQuery } from "@tanstack/react-query";
@@ -7,6 +7,10 @@ import { OTIFChart } from "@/components/OTIFChart";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { ScrollArea } from "@/components/ui/scroll-area";
+import { API_BASE } from "@/lib/api";
+import { cn } from "@/lib/utils";
 import {
   TrendingDown,
   CheckCircle,
@@ -20,9 +24,9 @@ import {
   Activity,
   RefreshCw,
   Wrench,
+  ChevronDown,
+  Check,
 } from "lucide-react";
-
-const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
 // ---------- shared types ----------
 
@@ -233,6 +237,7 @@ export default function AdminModelDashboard() {
   const { user, token } = useAuth();
   const [activeTab, setActiveTab] = useState<TabId>("dashboard");
   const [selectedMonth, setSelectedMonth] = useState<string | undefined>(undefined);
+  const activeTabIndex = Math.max(0, TABS.findIndex((t) => t.id === activeTab));
 
   if (!user || user.role !== "admin") {
     return (
@@ -247,11 +252,11 @@ export default function AdminModelDashboard() {
   return (
     <AppLayout>
       <div className="mx-auto max-w-7xl px-8 py-8">
-        {/* Header */}
-        <div className="mb-6 flex items-start justify-between">
-          <div>
-            <h1 className="text-2xl font-bold text-foreground">OTIF Model Command Centre</h1>
-            <p className="text-sm text-muted-foreground">
+        {/* Header — glass bar */}
+        <div className="glass-surface glass-surface-ring mb-8 flex flex-col gap-5 rounded-2xl p-5 shadow-sm transition-[box-shadow] duration-300 ease-smooth hover:shadow-md sm:flex-row sm:items-center sm:justify-between">
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">OTIF Model Command Centre</h1>
+            <p className="mt-1 text-sm text-muted-foreground">
               Technical health, explainability, prediction &amp; data management.
             </p>
           </div>
@@ -261,27 +266,48 @@ export default function AdminModelDashboard() {
           />
         </div>
 
-        {/* Tabs */}
-        <div className="mb-6 flex gap-1 rounded-lg border bg-muted/40 p-1">
-          {TABS.map((tab) => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id)}
-              className={`flex-1 rounded-md px-4 py-2 text-sm font-medium transition-all ${activeTab === tab.id
-                ? "bg-card text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground hover:bg-card/50"
-                }`}
-            >
-              {tab.label}
-            </button>
-          ))}
+        {/* Tabs — glass segment control (4 slots) */}
+        <div
+          className="glass-surface glass-surface-ring relative mb-8 flex w-full gap-1 rounded-2xl p-1 shadow-sm transition-shadow duration-300"
+          role="tablist"
+          aria-label="Model command centre sections"
+        >
+          <div
+            className="pointer-events-none absolute left-1 top-1 bottom-1 rounded-xl border border-primary/25 bg-primary/15 shadow-[0_0_24px_-8px_hsl(var(--primary)/0.45)] backdrop-blur-md transition-transform duration-300 ease-smooth dark:border-primary/30 dark:bg-primary/20"
+            style={{
+              width: "calc((100% - 0.75rem) / 4)",
+              transform: `translateX(calc(${activeTabIndex} * (100% + 0.25rem)))`,
+            }}
+          />
+          {TABS.map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                type="button"
+                role="tab"
+                aria-selected={isActive}
+                onClick={() => setActiveTab(tab.id)}
+                className={cn(
+                  "relative z-10 flex min-h-[44px] flex-1 flex-col items-center justify-center gap-1 rounded-xl px-2 py-2 text-center text-xs font-medium transition-colors duration-200 sm:flex-row sm:gap-2 sm:px-3 sm:text-sm",
+                  isActive ? "text-primary" : "text-muted-foreground hover:text-foreground",
+                )}
+              >
+                <Icon className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
+                <span className="leading-tight">{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
 
         {/* Tab panels */}
-        {activeTab === "dashboard" && <TabDashboard month={selectedMonth} token={token} />}
-        {activeTab === "shap" && <TabShap month={selectedMonth} token={token} />}
-        {activeTab === "prediction" && <TabPrediction token={token} />}
-        {activeTab === "data" && <TabDataManagement token={token} />}
+        <div key={activeTab} className="animate-fade-in">
+          {activeTab === "dashboard" && <TabDashboard month={selectedMonth} token={token} />}
+          {activeTab === "shap" && <TabShap month={selectedMonth} token={token} />}
+          {activeTab === "prediction" && <TabPrediction token={token} />}
+          {activeTab === "data" && <TabDataManagement token={token} />}
+        </div>
       </div>
     </AppLayout>
   );
@@ -297,26 +323,89 @@ function MonthSelector({
   onMonthChange: (m: string | undefined) => void;
 }) {
   const { token } = useAuth();
+  const [open, setOpen] = useState(false);
+  const labelId = useId();
   const { data } = useQuery({
     queryKey: ["admin-model-dashboard", undefined],
     queryFn: () => fetchModelSummary(undefined, token),
   });
 
+  const displayLabel = selectedMonth ?? "Latest";
+  const months = data?.availableMonths ?? [];
+
   return (
-    <div className="flex items-center gap-3 text-sm text-muted-foreground">
-      <span>Test month:</span>
-      <select
-        className="rounded-md border border-input bg-background px-2 py-1 text-sm"
-        value={selectedMonth ?? ""}
-        onChange={(e) => onMonthChange(e.target.value || undefined)}
-      >
-        <option value="">Latest</option>
-        {data?.availableMonths.map((m) => (
-          <option key={m} value={m}>
-            {m}
-          </option>
-        ))}
-      </select>
+    <div className="flex flex-wrap items-center gap-3 text-sm text-muted-foreground">
+      <span id={labelId} className="font-medium text-foreground/90">
+        Test month
+      </span>
+      <Popover open={open} onOpenChange={setOpen}>
+        <PopoverTrigger asChild>
+          <Button
+            type="button"
+            variant="outline"
+            aria-labelledby={labelId}
+            aria-expanded={open}
+            disabled={!data}
+            className="h-auto min-w-[168px] justify-between gap-2 rounded-xl border-border/60 bg-background/50 px-3 py-2 text-left text-sm font-medium shadow-sm backdrop-blur-md transition-all duration-200 hover:border-primary/35 hover:bg-background/70 hover:shadow-sm focus-visible:ring-2 focus-visible:ring-ring/50 dark:border-white/[0.12] dark:bg-white/[0.06] dark:hover:bg-white/[0.1]"
+          >
+            <span className="truncate">{data ? displayLabel : "Loading…"}</span>
+            <ChevronDown
+              className={cn("h-4 w-4 shrink-0 opacity-60 transition-transform duration-200", open && "rotate-180")}
+              aria-hidden
+            />
+          </Button>
+        </PopoverTrigger>
+        <PopoverContent
+          align="end"
+          sideOffset={8}
+          className="glass-popover min-w-[200px] max-w-[min(280px,calc(100vw-2rem))] p-0"
+          onCloseAutoFocus={(e) => e.preventDefault()}
+        >
+          <ScrollArea className="h-[min(280px,45vh)]">
+            <div className="flex flex-col gap-0.5 p-1.5" role="listbox">
+              <button
+                type="button"
+                role="option"
+                aria-selected={selectedMonth === undefined}
+                onClick={() => {
+                  onMonthChange(undefined);
+                  setOpen(false);
+                }}
+                className={cn(
+                  "flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors duration-150",
+                  selectedMonth === undefined
+                    ? "bg-primary/15 font-medium text-primary"
+                    : "text-foreground hover:bg-muted/70 dark:hover:bg-white/[0.08]",
+                )}
+              >
+                <span>Latest</span>
+                {selectedMonth === undefined && <Check className="h-4 w-4 shrink-0 text-primary" strokeWidth={2.5} />}
+              </button>
+              {months.map((m) => (
+                <button
+                  key={m}
+                  type="button"
+                  role="option"
+                  aria-selected={selectedMonth === m}
+                  onClick={() => {
+                    onMonthChange(m);
+                    setOpen(false);
+                  }}
+                  className={cn(
+                    "flex w-full items-center justify-between gap-2 rounded-lg px-3 py-2 text-left text-sm transition-colors duration-150",
+                    selectedMonth === m
+                      ? "bg-primary/15 font-medium text-primary"
+                      : "text-foreground hover:bg-muted/70 dark:hover:bg-white/[0.08]",
+                  )}
+                >
+                  <span className="truncate">{m}</span>
+                  {selectedMonth === m && <Check className="h-4 w-4 shrink-0 text-primary" strokeWidth={2.5} />}
+                </button>
+              ))}
+            </div>
+          </ScrollArea>
+        </PopoverContent>
+      </Popover>
     </div>
   );
 }

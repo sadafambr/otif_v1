@@ -27,8 +27,12 @@ export default function Login() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background px-4">
-      <div className="w-full max-w-md rounded-xl border bg-card p-8 shadow-sm">
+    <div className="relative flex min-h-screen items-center justify-center overflow-hidden bg-background px-4">
+      <div
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,hsl(var(--primary)/0.12),transparent)] dark:bg-[radial-gradient(ellipse_80%_50%_at_50%_-20%,hsl(var(--primary)/0.18),transparent)]"
+        aria-hidden
+      />
+      <div className="auth-glass-panel relative">
         <h1 className="mb-2 text-2xl font-bold text-foreground">Sign in to OTIF Insight Hub</h1>
         <p className="mb-6 text-sm text-muted-foreground">Access your OTIF risk analytics workspace.</p>
 

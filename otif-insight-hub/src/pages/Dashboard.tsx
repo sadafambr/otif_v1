@@ -1,4 +1,5 @@
-import { useState, useEffect, useMemo, useRef } from "react";
+import { useState, useEffect, useMemo } from "react";
+import { createPortal } from "react-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { KPICard } from "@/components/KPICard";
 import { OTIFChart } from "@/components/OTIFChart";
@@ -7,11 +8,13 @@ import { OrderDetailModal } from "@/components/OrderDetailModal";
 import { OTIFAnalyticsPanel } from "@/components/OTIFAnalyticsPanel";
 import { useDashboard, useOrderDetail } from "@/hooks/useOTIF";
 import { getDashboardData } from "@/lib/dataStore";
+import { cn } from "@/lib/utils";
 import { fetchFavorites, saveFavorite, deleteFavorite, type FavoriteFilter } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
-import { Package, XCircle, CheckCircle, TrendingDown, Calendar, MapPin, Globe, ChevronDown, Download, Star, Trash2, Save } from "lucide-react";
+import { Package, XCircle, CheckCircle, TrendingDown, Calendar, MapPin, Globe, ChevronDown, ChevronUp, Download, Star, Trash2, Save, LayoutDashboard, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { OTIFRecord, PeriodFilter } from "@/types/otif";
 
 const periods: PeriodFilter[] = [
@@ -37,9 +40,7 @@ export default function Dashboard() {
   const [selectedRegion, setSelectedRegion] = useState<(typeof regions)[number]["value"]>("NAM");
   const [selectedCountry, setSelectedCountry] = useState("all");
   const [countryDropdownOpen, setCountryDropdownOpen] = useState(false);
-  const countryDropdownRef = useRef<HTMLDivElement>(null);
   const [selectedOrder, setSelectedOrder] = useState<OTIFRecord | null>(null);
-  const [filtersExpanded, setFiltersExpanded] = useState(false);
   const [activeTab, setActiveTab] = useState<"dashboard" | "analytics">("dashboard");
 
   const { token } = useAuth();
@@ -47,21 +48,45 @@ export default function Dashboard() {
   const [newFavName, setNewFavName] = useState("");
   const [showSaveFav, setShowSaveFav] = useState(false);
   const [favDropdownOpen, setFavDropdownOpen] = useState(false);
-  const favDropdownRef = useRef<HTMLDivElement>(null);
+  const [filtersTrayOpen, setFiltersTrayOpen] = useState(false);
 
-  // Close dropdowns when clicking outside
+  const hasCustomGlobalFilters = useMemo(
+    () =>
+      selectedPeriod !== "all" ||
+      selectedCreationPeriod !== "all" ||
+      selectedRegion !== "NAM" ||
+      (selectedRegion === "NAM" && selectedCountry !== "all"),
+    [selectedPeriod, selectedCreationPeriod, selectedRegion, selectedCountry],
+  );
+
   useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (countryDropdownRef.current && !countryDropdownRef.current.contains(e.target as Node)) {
-        setCountryDropdownOpen(false);
-      }
-      if (favDropdownRef.current && !favDropdownRef.current.contains(e.target as Node)) {
-        setFavDropdownOpen(false);
-      }
+    if (!filtersTrayOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setFiltersTrayOpen(false);
     };
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
-  }, []);
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [filtersTrayOpen]);
+
+  useEffect(() => {
+    if (!filtersTrayOpen) {
+      setCountryDropdownOpen(false);
+      setFavDropdownOpen(false);
+    }
+  }, [filtersTrayOpen]);
+
+  useEffect(() => {
+    if (!filtersTrayOpen) return;
+    const prevBody = document.body.style.overflow;
+    const main = document.querySelector("main");
+    const prevMain = main ? (main as HTMLElement).style.overflow : "";
+    document.body.style.overflow = "hidden";
+    if (main) (main as HTMLElement).style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prevBody;
+      if (main) (main as HTMLElement).style.overflow = prevMain;
+    };
+  }, [filtersTrayOpen]);
 
   // If Region changes away from NAM, clear country filter (and close dropdown)
   useEffect(() => {
@@ -274,280 +299,352 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Tabs */}
-        <div className="mb-6 border-b">
-          <div className="flex">
+        {/* Tabs + compact active filters (chips live in popover) */}
+        <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+          <div
+            className="relative inline-flex w-full max-w-2xl flex-1 gap-1 rounded-2xl border border-border/60 bg-card/45 p-1 shadow-sm backdrop-blur-xl dark:border-white/[0.08] dark:bg-black/35 dark:shadow-[0_8px_32px_-8px_rgba(0,0,0,0.6)]"
+            role="tablist"
+            aria-label="Dashboard views"
+          >
+            <div
+              className="pointer-events-none absolute left-1 top-1 bottom-1 rounded-xl border border-primary/25 bg-primary/15 shadow-[0_0_24px_-8px_hsl(var(--primary)/0.45)] backdrop-blur-md transition-transform duration-300 ease-smooth dark:border-primary/30 dark:bg-primary/20"
+              style={{
+                width: "calc((100% - 0.25rem) / 2)",
+                transform:
+                  activeTab === "dashboard"
+                    ? "translateX(0)"
+                    : "translateX(calc(100% + 0.25rem))",
+              }}
+            />
             <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "dashboard"}
               onClick={() => setActiveTab("dashboard")}
-              className={`relative px-5 py-3 text-sm font-medium transition-colors ${
+              className={cn(
+                "relative z-10 flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors duration-200",
                 activeTab === "dashboard"
                   ? "text-primary"
                   : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              OTIF Risk Dashboard
-              {activeTab === "dashboard" && (
-                <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-primary" />
               )}
+            >
+              <LayoutDashboard className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
+              <span className="whitespace-nowrap">OTIF Risk Dashboard</span>
             </button>
             <button
+              type="button"
+              role="tab"
+              aria-selected={activeTab === "analytics"}
               onClick={() => setActiveTab("analytics")}
-              className={`relative px-5 py-3 text-sm font-medium transition-colors ${
+              className={cn(
+                "relative z-10 flex flex-1 items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-medium transition-colors duration-200",
                 activeTab === "analytics"
                   ? "text-primary"
                   : "text-muted-foreground hover:text-foreground"
-              }`}
-            >
-              OTIF Prediction Analytics
-              {activeTab === "analytics" && (
-                <span className="absolute bottom-0 left-0 right-0 h-[2px] bg-primary" />
               )}
+            >
+              <BarChart3 className="h-4 w-4 shrink-0 opacity-80" aria-hidden />
+              <span className="whitespace-nowrap">OTIF Prediction Analytics</span>
             </button>
           </div>
+
+          <button
+            type="button"
+            onClick={() => setFiltersTrayOpen((o) => !o)}
+            className={cn(
+              "inline-flex h-[42px] shrink-0 items-center gap-2 rounded-full border border-border/70 bg-background/85 px-3.5 shadow-sm backdrop-blur-md transition-[border-color,box-shadow,background-color,transform] duration-300 ease-out hover:bg-background active:scale-[0.98] dark:border-white/[0.12] dark:bg-black/40 dark:hover:bg-black/55 sm:px-4",
+              filtersTrayOpen && "border-primary/35 bg-primary/[0.07] shadow-[0_0_20px_-8px_hsl(var(--primary)/0.35)] dark:bg-primary/[0.12]",
+            )}
+            aria-expanded={filtersTrayOpen}
+            aria-haspopup="dialog"
+            aria-controls="manage-filters-popup"
+          >
+            <div className="flex shrink-0 -space-x-0.5" aria-hidden>
+              <Calendar className="h-4 w-4 text-muted-foreground" />
+              <Globe className="h-4 w-4 text-muted-foreground" />
+            </div>
+            <span className="max-w-[7.5rem] truncate text-sm font-semibold text-foreground sm:max-w-none">
+              Active Filters
+            </span>
+            {hasCustomGlobalFilters && (
+              <span
+                className="h-2 w-2 shrink-0 rounded-full bg-primary shadow-[0_0_10px_hsl(var(--primary)/0.55)]"
+                title="Non-default filters"
+              />
+            )}
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 ease-out",
+                filtersTrayOpen && "rotate-180",
+              )}
+            />
+          </button>
         </div>
 
+        {typeof document !== "undefined" &&
+          filtersTrayOpen &&
+          createPortal(
+            <>
+              <div
+                className="active-filters-overlay fixed inset-0 z-[200] bg-black/30 backdrop-blur-[3px] dark:bg-black/55"
+                aria-hidden
+                onClick={() => setFiltersTrayOpen(false)}
+              />
+              <div
+                id="manage-filters-popup"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="manage-filters-popup-title"
+                className="active-filters-popup-panel glass-popover fixed z-[201] flex max-h-[min(calc(100vh-1.25rem),90vh)] w-[min(42rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border/60 shadow-2xl dark:border-white/[0.12]"
+                style={{
+                  top: "max(0.75rem, env(safe-area-inset-top, 0px))",
+                  right: "max(0.75rem, env(safe-area-inset-right, 0px))",
+                }}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4 py-3 dark:border-white/[0.08]">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <div className="flex shrink-0 -space-x-0.5" aria-hidden>
+                      <Calendar className="h-4 w-4 text-muted-foreground" />
+                      <Globe className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                    <h2 id="manage-filters-popup-title" className="truncate text-sm font-semibold text-foreground">
+                      Manage filters
+                    </h2>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => setFiltersTrayOpen(false)}
+                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground"
+                    aria-label="Close manage filters"
+                  >
+                    <ChevronUp className="h-4 w-4" />
+                  </button>
+                </div>
+
+                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
+                  <div className="flex flex-col gap-4 xl:flex-row xl:flex-wrap xl:items-center">
+                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                      <div className="flex items-center gap-1.5">
+                        <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="mr-1 whitespace-nowrap text-[13px] font-medium text-muted-foreground">Req. Delivery Date</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {periods.map((p) => (
+                          <button
+                            key={p.value}
+                            type="button"
+                            onClick={() => setSelectedPeriod(p.value)}
+                            className={selectedPeriod === p.value ? "filter-chip-active whitespace-nowrap" : "filter-chip-inactive whitespace-nowrap"}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="hidden h-6 w-px shrink-0 bg-border/60 dark:bg-white/[0.1] xl:block" />
+
+                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
+                      <div className="flex items-center gap-1.5">
+                        <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                        <span className="mr-1 whitespace-nowrap text-[13px] font-medium text-muted-foreground">SO Create Date</span>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {periods.map((p) => (
+                          <button
+                            key={p.value}
+                            type="button"
+                            onClick={() => setSelectedCreationPeriod(p.value)}
+                            className={selectedCreationPeriod === p.value ? "filter-chip-active whitespace-nowrap" : "filter-chip-inactive whitespace-nowrap"}
+                          >
+                            {p.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-4 border-t border-border/40 pt-4 dark:border-white/[0.08]">
+                    <div className="flex flex-wrap items-center gap-1.5">
+                      <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                      <span className="mr-1 whitespace-nowrap text-[13px] font-medium text-muted-foreground">Region</span>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        {regions.map((r) => (
+                          <button
+                            key={r.value}
+                            type="button"
+                            onClick={() => setSelectedRegion(r.value)}
+                            className={selectedRegion === r.value ? "filter-chip-active" : "filter-chip-inactive"}
+                          >
+                            {r.label}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+
+                    {selectedRegion === "NAM" && countriesWithCounts.length > 0 && (
+                      <>
+                        <div className="hidden h-6 w-px shrink-0 bg-border/60 dark:bg-white/[0.1] sm:block" />
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+                          <span className="mr-1 whitespace-nowrap text-[13px] font-medium text-muted-foreground">Countries</span>
+                          <Popover open={countryDropdownOpen} onOpenChange={setCountryDropdownOpen}>
+                            <PopoverTrigger asChild>
+                              <button
+                                id="filter-country"
+                                type="button"
+                                className={cn(
+                                  "region-select flex min-w-[140px] items-center justify-between gap-2",
+                                  selectedCountry !== "all" && "filter-chip-active border-primary text-primary-foreground",
+                                )}
+                              >
+                                <span className="max-w-[140px] truncate">{selectedCountry === "all" ? "All Countries" : selectedCountry}</span>
+                                <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
+                              </button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              align="start"
+                              side="bottom"
+                              sideOffset={6}
+                              className="z-[230] w-64 border-border/60 p-0 dark:border-white/[0.1]"
+                            >
+                              <div className="max-h-[min(24rem,70vh)] overflow-y-auto py-1">
+                                <button
+                                  type="button"
+                                  onClick={() => { setSelectedCountry("all"); setCountryDropdownOpen(false); }}
+                                  className={cn(
+                                    "flex w-full items-center justify-between px-3 py-2.5 text-[13px] transition-colors hover:bg-accent",
+                                    selectedCountry === "all" && "bg-accent font-medium text-primary",
+                                  )}
+                                >
+                                  <span className="truncate pr-2 text-left">All Countries</span>
+                                </button>
+                                {countriesWithCounts.map((c) => (
+                                  <button
+                                    key={c.name}
+                                    type="button"
+                                    onClick={() => { setSelectedCountry(c.name); setCountryDropdownOpen(false); }}
+                                    className={cn(
+                                      "flex w-full items-center justify-between gap-2 px-3 py-2.5 text-[13px] transition-colors hover:bg-accent",
+                                      selectedCountry === c.name && "bg-accent font-medium text-primary",
+                                    )}
+                                  >
+                                    <span className="min-w-0 truncate text-left">{c.name}</span>
+                                    <span className="shrink-0 tabular-nums text-xs text-muted-foreground">{c.count.toLocaleString()}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </PopoverContent>
+                          </Popover>
+                        </div>
+                      </>
+                    )}
+
+                    {token && (
+                      <>
+                        <div className="hidden h-6 w-px shrink-0 bg-border/60 dark:bg-white/[0.1] sm:block" />
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          <Popover open={favDropdownOpen} onOpenChange={setFavDropdownOpen}>
+                            <PopoverTrigger asChild>
+                              <Button
+                                variant="outline"
+                                type="button"
+                                className="h-8 gap-1.5 rounded-full border-border/60 bg-background/30 px-3 text-[13px] font-medium text-muted-foreground backdrop-blur-sm dark:border-white/[0.12] dark:bg-white/[0.06]"
+                              >
+                                <Star className="h-3.5 w-3.5 fill-yellow-500/20 text-yellow-500" />
+                                Saved Filters
+                                <ChevronDown className="h-3.5 w-3.5 opacity-50" />
+                              </Button>
+                            </PopoverTrigger>
+                            <PopoverContent
+                              align="start"
+                              side="bottom"
+                              sideOffset={6}
+                              className="z-[230] w-64 border-border/60 p-1.5 dark:border-white/[0.1]"
+                            >
+                              {favorites.length === 0 ? (
+                                <div className="px-3 py-4 text-center text-sm text-muted-foreground">No saved filters yet</div>
+                              ) : (
+                                <div className="max-h-[min(24rem,70vh)] overflow-y-auto">
+                                  {favorites.map((fav) => (
+                                    <div
+                                      key={fav.id}
+                                      className="group flex items-center justify-between gap-2 rounded-md px-1 py-0.5"
+                                    >
+                                      <button
+                                        type="button"
+                                        className="min-w-0 flex-1 truncate rounded-md px-1 py-1.5 text-left text-sm font-medium transition-colors hover:bg-accent"
+                                        onClick={() => handleApplyFavorite(fav)}
+                                      >
+                                        {fav.name}
+                                      </button>
+                                      <Button
+                                        variant="ghost"
+                                        size="icon"
+                                        className="h-6 w-6 shrink-0 text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:text-destructive"
+                                        onClick={(e) => handleDeleteFavorite(e, fav.id)}
+                                      >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                      </Button>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </PopoverContent>
+                          </Popover>
+
+                          {!showSaveFav ? (
+                            <Button
+                              variant="ghost"
+                              type="button"
+                              className="h-8 gap-1.5 rounded-full px-3 text-[13px] font-medium text-muted-foreground hover:text-foreground"
+                              onClick={() => setShowSaveFav(true)}
+                            >
+                              <Save className="h-3.5 w-3.5" />
+                              Save Current
+                            </Button>
+                          ) : (
+                            <div className="flex flex-wrap items-center gap-1.5 animate-in duration-200 slide-in-from-left-2">
+                              <Input
+                                autoFocus
+                                placeholder="Filter name..."
+                                value={newFavName}
+                                onChange={(e) => setNewFavName(e.target.value)}
+                                className="h-8 w-40 rounded-full border-border px-3 text-[13px]"
+                                onKeyDown={(e) => {
+                                  if (e.key === "Enter") handleSaveFavorite();
+                                  if (e.key === "Escape") setShowSaveFav(false);
+                                }}
+                              />
+                              <Button type="button" className="h-8 rounded-full px-3 text-[13px] font-medium" onClick={handleSaveFavorite}>
+                                Save
+                              </Button>
+                              <Button
+                                type="button"
+                                variant="ghost"
+                                className="h-8 rounded-full px-3 text-[13px] font-medium text-muted-foreground hover:text-foreground"
+                                onClick={() => setShowSaveFav(false)}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </>,
+            document.body,
+          )}
+
+        <div key={activeTab} className="animate-fade-in">
         {activeTab === "analytics" ? (
           <OTIFAnalyticsPanel orders={filteredOrders} />
         ) : (
         <>
-        {/* Filters Section */}
-        <div className="mb-6 relative z-10 rounded-xl border bg-card/50 backdrop-blur-sm">
-          <button
-            onClick={() => setFiltersExpanded(!filtersExpanded)}
-            className={`flex w-full items-center justify-between px-4 py-3 hover:bg-accent/50 transition-colors ${
-              filtersExpanded ? "rounded-t-xl" : "rounded-xl"
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <div className="flex -space-x-1">
-                <Calendar className="h-4 w-4 text-muted-foreground" />
-                <Globe className="h-4 w-4 text-muted-foreground" />
-              </div>
-              <span className="text-sm font-semibold text-foreground">Active Filters</span>
-              {!filtersExpanded && (
-                <div className="flex items-center gap-2 ml-4">
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                    {selectedPeriod === "all" ? "All Time" : periods.find(p => p.value === selectedPeriod)?.label}
-                  </span>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                    Created: {selectedCreationPeriod === "all" ? "All Time" : periods.find(p => p.value === selectedCreationPeriod)?.label}
-                  </span>
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                    {selectedRegion}
-                  </span>
-                  {selectedRegion === "NAM" && (
-                    <span className="text-xs px-2 py-0.5 rounded-full bg-primary/10 text-primary font-medium">
-                      {selectedCountry === "all" ? "All Countries" : selectedCountry}
-                    </span>
-                  )}
-                </div>
-              )}
-            </div>
-            {filtersExpanded ? (
-              <ChevronDown className="h-4 w-4 text-muted-foreground rotate-180 transition-transform" />
-            ) : (
-              <ChevronDown className="h-4 w-4 text-muted-foreground transition-transform" />
-            )}
-          </button>
-          
-          {filtersExpanded && (
-            <div className="flex flex-col gap-y-4 border-t p-4 animate-in fade-in slide-in-from-top-1 duration-200">
-              {/* Date Filters Row */}
-              <div className="flex flex-nowrap items-center gap-x-4 gap-y-4 w-full">
-                {/* Requested Delivery Date filters */}
-                <div className="flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <span className="mr-1 text-[13px] font-medium text-muted-foreground whitespace-nowrap">Req. Delivery Date</span>
-                  <div className="flex items-center gap-1.5">
-                    {periods.map((p) => (
-                      <button
-                        key={p.value}
-                        onClick={(e) => { e.stopPropagation(); setSelectedPeriod(p.value); }}
-                        className={selectedPeriod === p.value ? "filter-chip-active whitespace-nowrap" : "filter-chip-inactive whitespace-nowrap"}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Divider */}
-                <div className="h-6 w-px bg-border hidden xl:block shrink-0" />
-
-                {/* SO Create Date filter */}
-                <div className="flex items-center gap-1.5">
-                  <Calendar className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <span className="mr-1 text-[13px] font-medium text-muted-foreground whitespace-nowrap">SO Create Date</span>
-                  <div className="flex items-center gap-1.5">
-                    {periods.map((p) => (
-                      <button
-                        key={p.value}
-                        onClick={(e) => { e.stopPropagation(); setSelectedCreationPeriod(p.value); }}
-                        className={selectedCreationPeriod === p.value ? "filter-chip-active whitespace-nowrap" : "filter-chip-inactive whitespace-nowrap"}
-                      >
-                        {p.label}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-              </div>
-
-              {/* Secondary Filters Row */}
-              <div className="flex flex-wrap items-center gap-x-4 gap-y-4">
-                {/* Region filter */}
-              <div className="flex items-center gap-1.5">
-                <Globe className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                <span className="mr-1 text-[13px] font-medium text-muted-foreground whitespace-nowrap">Region</span>
-                <div className="flex items-center gap-1.5">
-                  {regions.map((r) => (
-                    <button
-                      key={r.value}
-                      onClick={(e) => { e.stopPropagation(); setSelectedRegion(r.value); }}
-                      className={selectedRegion === r.value ? "filter-chip-active" : "filter-chip-inactive"}
-                    >
-                      {r.label}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Divider */}
-              {selectedRegion === "NAM" && countriesWithCounts.length > 0 && (
-                <div className="h-6 w-px bg-border hidden sm:block shrink-0" />
-              )}
-
-              {/* Countries filter */}
-              {selectedRegion === "NAM" && countriesWithCounts.length > 0 && (
-                <div className="flex items-center gap-1.5">
-                  <MapPin className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
-                  <span className="mr-1 text-[13px] font-medium text-muted-foreground whitespace-nowrap">Countries</span>
-                  <div className="relative" ref={countryDropdownRef}>
-                    <button
-                      id="filter-country"
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); setCountryDropdownOpen((prev) => !prev); }}
-                      className={`region-select flex items-center gap-2 min-w-[140px] justify-between ${
-                        selectedCountry === "all" ? "" : "filter-chip-active text-primary-foreground border-primary"
-                      }`}
-                    >
-                      <span className="truncate max-w-[110px]">{selectedCountry === "all" ? "All Countries" : selectedCountry}</span>
-                      <ChevronDown className="h-3.5 w-3.5 opacity-50 shrink-0" />
-                    </button>
-                    {countryDropdownOpen && (
-                      <div className="absolute left-0 top-full z-50 mt-1 w-64 max-h-72 overflow-y-auto rounded-lg border border-border bg-card shadow-lg">
-                        <button
-                          type="button"
-                          onClick={() => { setSelectedCountry("all"); setCountryDropdownOpen(false); }}
-                          className={`w-full flex items-center justify-between px-3 py-2 text-[13px] hover:bg-accent transition-colors ${
-                            selectedCountry === "all" ? "bg-accent font-medium text-primary" : ""
-                          }`}
-                        >
-                          <span>All Countries</span>
-                        </button>
-                        {countriesWithCounts.map((c) => (
-                          <button
-                            key={c.name}
-                            type="button"
-                            onClick={() => { setSelectedCountry(c.name); setCountryDropdownOpen(false); }}
-                            className={`w-full flex items-center justify-between px-3 py-2 text-[13px] hover:bg-accent transition-colors ${
-                              selectedCountry === c.name ? "bg-accent font-medium text-primary" : ""
-                            }`}
-                          >
-                            <span>{c.name}</span>
-                            <span className="text-xs text-muted-foreground">{c.count.toLocaleString()}</span>
-                          </button>
-                        ))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Favorites - only if token exists */}
-              {token && (
-                <>
-                  <div className="h-6 w-px bg-border hidden sm:block shrink-0" />
-                  
-                  <div className="flex items-center gap-1.5">
-                    <div className="relative" ref={favDropdownRef}>
-                      <Button
-                        variant="outline"
-                        className="h-8 rounded-full px-3 text-[13px] font-medium gap-1.5 border-border text-muted-foreground hover:text-foreground"
-                        onClick={(e) => { e.stopPropagation(); setFavDropdownOpen((prev) => !prev); }}
-                      >
-                        <Star className="h-3.5 w-3.5 text-yellow-500 fill-yellow-500/20" />
-                        Saved Filters
-                        <ChevronDown className="h-3.5 w-3.5 opacity-50" />
-                      </Button>
-                      
-                      {favDropdownOpen && (
-                        <div className="absolute left-0 top-full z-50 mt-1 w-64 max-h-72 overflow-y-auto rounded-lg border border-border bg-card shadow-lg p-1">
-                          {favorites.length === 0 ? (
-                            <div className="px-3 py-4 text-center text-sm text-muted-foreground">
-                              No saved filters yet
-                            </div>
-                          ) : (
-                            favorites.map((fav) => (
-                              <div
-                                key={fav.id}
-                                className="group flex items-center justify-between px-2 py-1.5 text-sm hover:bg-accent rounded-md cursor-pointer transition-colors"
-                                onClick={() => handleApplyFavorite(fav)}
-                              >
-                                <span className="font-medium truncate pr-2">{fav.name}</span>
-                                <Button
-                                  variant="ghost"
-                                  size="icon"
-                                  className="h-6 w-6 text-muted-foreground opacity-0 group-hover:opacity-100 hover:text-destructive transition-all"
-                                  onClick={(e) => handleDeleteFavorite(e, fav.id)}
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
-                              </div>
-                            ))
-                          )}
-                        </div>
-                      )}
-                    </div>
-
-                    {!showSaveFav ? (
-                      <Button
-                        variant="ghost"
-                        className="h-8 rounded-full px-3 text-[13px] font-medium gap-1.5 text-muted-foreground hover:text-foreground"
-                        onClick={() => setShowSaveFav(true)}
-                      >
-                        <Save className="h-3.5 w-3.5" />
-                        Save Current
-                      </Button>
-                    ) : (
-                      <div className="flex items-center gap-1.5 slide-in-from-left-2 animate-in duration-200">
-                        <Input
-                          autoFocus
-                          placeholder="Filter name..."
-                          value={newFavName}
-                          onChange={(e) => setNewFavName(e.target.value)}
-                          className="h-8 rounded-full px-3 text-[13px] w-40 border-border"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') handleSaveFavorite();
-                            if (e.key === 'Escape') setShowSaveFav(false);
-                          }}
-                        />
-                        <Button className="h-8 rounded-full px-3 text-[13px] font-medium" onClick={handleSaveFavorite}>
-                          Save
-                        </Button>
-                        <Button variant="ghost" className="h-8 rounded-full px-3 text-[13px] font-medium text-muted-foreground hover:text-foreground" onClick={() => setShowSaveFav(false)}>
-                          Cancel
-                        </Button>
-                      </div>
-                    )}
-                  </div>
-                </>
-              )}
-              </div>
-            </div>
-          )}
-        </div>
-
-
         {/* KPI Cards */}
         <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
           <KPICard label="Total Orders" value={filteredSummary?.totalOrders ?? summary.totalOrders} description="Orders evaluated" icon={Package} variant="default" />
@@ -578,6 +675,7 @@ export default function Dashboard() {
         )}
         </>
         )}
+        </div>
       </div>
     </AppLayout>
   );

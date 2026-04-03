@@ -84,7 +84,7 @@ def generate_text_insights(shap_summary, metrics, context_name):
     top_feat = shap_summary.iloc[0]['feature'] if not shap_summary.empty else "N/A"
     precision = metrics.get('miss_precision', 0)
     
-    insight = f"### 💡 Business Insights for {context_name}\n"
+    insight = f"###  Business Insights for {context_name}\n"
     insight += f"- **Primary Risk Driver**: The model identifies `{top_feat}` as the most significant factor affecting OTIF for this batch.\n"
     
     if precision > 0.7:
@@ -94,7 +94,7 @@ def generate_text_insights(shap_summary, metrics, context_name):
     else:
         insight += f"- **Confidence**: Low precision for MISS class. Use these scores as relative risk indicators rather than absolute certainties.\n"
         
-    insight += "\n#### 🛡️ Mitigation Strategies\n"
+    insight += "\n####  Mitigation Strategies\n"
     if "lead_gap" in top_feat.lower() or "tight" in top_feat.lower():
         insight += "- **Lead Time**: Consider increasing buffer days for these specific material/plant combinations.\n"
     elif "congestion" in top_feat.lower() or "load" in top_feat.lower():
