@@ -75,7 +75,7 @@ export interface OrderSummaryResponse {
 export async function fetchOrderSummary(order: OTIFRecord, token?: string): Promise<OrderSummaryResponse> {
   // --- sessionStorage daily cache ---
   const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
-  const cacheKey = `order_summary_${order.salesOrder}_${today}_v4`;
+  const cacheKey = `order_summary_${order.salesOrder}_${today}_v6_json_bullets`;
 
   try {
     const cached = sessionStorage.getItem(cacheKey);

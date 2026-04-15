@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useTransition, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { KPICard } from "@/components/KPICard";
@@ -11,7 +11,7 @@ import { getDashboardData } from "@/lib/dataStore";
 import { cn } from "@/lib/utils";
 import { fetchFavorites, saveFavorite, deleteFavorite, type FavoriteFilter } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
-import { Package, XCircle, CheckCircle, TrendingDown, Calendar, MapPin, Globe, ChevronDown, ChevronUp, Download, Star, Trash2, Save, LayoutDashboard, BarChart3 } from "lucide-react";
+import { Package, XCircle, CheckCircle, TrendingDown, Calendar, ChevronDown, ChevronUp, Download, Star, Trash2, Save, LayoutDashboard, BarChart3, Users } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -25,21 +25,27 @@ const periods: PeriodFilter[] = [
   { label: "> 30 Days", value: "over_30_days" },
 ];
 
-const regions = [
-  { label: "NAM", value: "NAM" },
-  { label: "EUR", value: "EUR" },
-  { label: "APAC", value: "APAC" },
-  { label: "LATAM", value: "LATAM" },
-] as const;
+type OrderDateCache = { req: number; so: number };
+
+function getOrderDateTimes(o: OTIFRecord, cache: WeakMap<OTIFRecord, OrderDateCache>): OrderDateCache {
+  let t = cache.get(o);
+  if (!t) {
+    t = {
+      req: o.reqDelivery ? Date.parse(o.reqDelivery) : NaN,
+      so: o.soCreateDate ? Date.parse(o.soCreateDate) : NaN,
+    };
+    cache.set(o, t);
+  }
+  return t;
+}
 
 export default function Dashboard() {
   const { summary, orders, loading, loadDashboard, refresh } = useDashboard();
+  const [, startFilterTransition] = useTransition();
+  const orderDateCacheRef = useRef<WeakMap<OTIFRecord, OrderDateCache>>(new WeakMap());
   const { detail, loading: detailLoading, fetchDetail, setDetail } = useOrderDetail();
   const [selectedPeriod, setSelectedPeriod] = useState("all");
   const [selectedCreationPeriod, setSelectedCreationPeriod] = useState("all");
-  const [selectedRegion, setSelectedRegion] = useState<(typeof regions)[number]["value"]>("NAM");
-  const [selectedCountry, setSelectedCountry] = useState("all");
-  const [countryDropdownOpen, setCountryDropdownOpen] = useState(false);
   const [selectedOrder, setSelectedOrder] = useState<OTIFRecord | null>(null);
   const [activeTab, setActiveTab] = useState<"dashboard" | "analytics">("dashboard");
 
@@ -51,12 +57,8 @@ export default function Dashboard() {
   const [filtersTrayOpen, setFiltersTrayOpen] = useState(false);
 
   const hasCustomGlobalFilters = useMemo(
-    () =>
-      selectedPeriod !== "all" ||
-      selectedCreationPeriod !== "all" ||
-      selectedRegion !== "NAM" ||
-      (selectedRegion === "NAM" && selectedCountry !== "all"),
-    [selectedPeriod, selectedCreationPeriod, selectedRegion, selectedCountry],
+    () => selectedPeriod !== "all" || selectedCreationPeriod !== "all",
+    [selectedPeriod, selectedCreationPeriod],
   );
 
   useEffect(() => {
@@ -70,7 +72,6 @@ export default function Dashboard() {
 
   useEffect(() => {
     if (!filtersTrayOpen) {
-      setCountryDropdownOpen(false);
       setFavDropdownOpen(false);
     }
   }, [filtersTrayOpen]);
@@ -87,14 +88,6 @@ export default function Dashboard() {
       if (main) (main as HTMLElement).style.overflow = prevMain;
     };
   }, [filtersTrayOpen]);
-
-  // If Region changes away from NAM, clear country filter (and close dropdown)
-  useEffect(() => {
-    if (selectedRegion !== "NAM") {
-      setSelectedCountry("all");
-      setCountryDropdownOpen(false);
-    }
-  }, [selectedRegion]);
 
   // Load data from in-memory store
   useEffect(() => {
@@ -116,7 +109,7 @@ export default function Dashboard() {
   const handleSaveFavorite = async () => {
     if (!token || !newFavName.trim()) return;
     try {
-      const state = JSON.stringify({ selectedPeriod, selectedCreationPeriod, selectedRegion, selectedCountry });
+      const state = JSON.stringify({ selectedPeriod, selectedCreationPeriod });
       const saved = await saveFavorite(token, newFavName.trim(), state);
       setFavorites((prev) => [...prev, saved]);
       setNewFavName("");
@@ -140,10 +133,10 @@ export default function Dashboard() {
   const handleApplyFavorite = (fav: FavoriteFilter) => {
     try {
       const state = JSON.parse(fav.filter_state);
-      if (state.selectedPeriod) setSelectedPeriod(state.selectedPeriod);
-      if (state.selectedCreationPeriod) setSelectedCreationPeriod(state.selectedCreationPeriod);
-      if (state.selectedRegion) setSelectedRegion(state.selectedRegion);
-      if (state.selectedCountry) setSelectedCountry(state.selectedCountry);
+      startFilterTransition(() => {
+        if (state.selectedPeriod) setSelectedPeriod(state.selectedPeriod);
+        if (state.selectedCreationPeriod) setSelectedCreationPeriod(state.selectedCreationPeriod);
+      });
     } catch (err) {
       console.error("Failed to parse favorite state", err);
     }
@@ -155,6 +148,104 @@ export default function Dashboard() {
     await fetchDetail(order);
   };
 
+  const greeting = useMemo(() => {
+    const h = new Date().getHours();
+    if (h < 12) return "Good morning";
+    if (h < 17) return "Good afternoon";
+    return "Good evening";
+  }, []);
+
+  /** Single pass: filter rows, cache parsed dates per order, derive summary without extra scans. */
+  const { filteredOrders, filteredSummary } = useMemo(() => {
+    if (!orders?.length) {
+      return { filteredOrders: [] as OTIFRecord[], filteredSummary: summary };
+    }
+    if (!summary) {
+      return { filteredOrders: [] as OTIFRecord[], filteredSummary: summary };
+    }
+
+    const cache = orderDateCacheRef.current;
+    const now = new Date();
+    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const startTodayMs = startOfToday.getTime();
+    const end7Ms = startTodayMs + 7 * 86_400_000;
+    const end14Ms = startTodayMs + 14 * 86_400_000;
+    const startOver30Ms = startTodayMs + 30 * 86_400_000;
+
+    const inPeriodMs = (ms: number, periodType: string): boolean => {
+      if (periodType === "all") return true;
+      if (!Number.isFinite(ms)) return true;
+      switch (periodType) {
+        case "today": {
+          const d = new Date(ms);
+          return (
+            d.getFullYear() === startOfToday.getFullYear() &&
+            d.getMonth() === startOfToday.getMonth() &&
+            d.getDate() === startOfToday.getDate()
+          );
+        }
+        case "7_days":
+          return ms >= startTodayMs && ms <= end7Ms;
+        case "14_days":
+          return ms >= startTodayMs && ms <= end14Ms;
+        case "over_30_days":
+          return ms > startOver30Ms;
+        default:
+          return true;
+      }
+    };
+
+    const next: OTIFRecord[] = [];
+    let miss = 0;
+    let hit = 0;
+
+    for (const o of orders) {
+      const { req, so } = getOrderDateTimes(o, cache);
+      if (!inPeriodMs(req, selectedPeriod)) continue;
+      if (!inPeriodMs(so, selectedCreationPeriod)) continue;
+      next.push(o);
+      if (o.status === "Miss") miss++;
+      else hit++;
+    }
+
+    const total = next.length;
+    if (total === 0) {
+      return { filteredOrders: next, filteredSummary: summary };
+    }
+
+    return {
+      filteredOrders: next,
+      filteredSummary: {
+        ...summary,
+        totalOrders: total,
+        otifMiss: miss,
+        otifHit: hit,
+        missRate: total > 0 ? Math.round((miss / total) * 1000) / 10 : 0,
+      },
+    };
+  }, [orders, summary, selectedPeriod, selectedCreationPeriod]);
+
+  /** Predicted misses by customer (filtered dataset) for dashboard spotlight */
+  const topCustomersByMiss = useMemo(() => {
+    if (!filteredOrders.length) return [];
+    const countMap = new Map<string, number>();
+    for (const o of filteredOrders) {
+      if (o.status !== "Miss") continue;
+      const name = (o.customer || "").trim() || "(Unknown)";
+      countMap.set(name, (countMap.get(name) || 0) + 1);
+    }
+    return Array.from(countMap.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8);
+  }, [filteredOrders]);
+
+  const setPeriod = useCallback((value: string) => {
+    startFilterTransition(() => setSelectedPeriod(value));
+  }, [startFilterTransition]);
+  const setCreationPeriod = useCallback((value: string) => {
+    startFilterTransition(() => setSelectedCreationPeriod(value));
+  }, [startFilterTransition]);
+
   const handleExportSummary = () => {
     if (!summary) return;
     const data = {
@@ -165,8 +256,6 @@ export default function Dashboard() {
       "Timestamp": new Date(summary.lastUpdated).toISOString(),
       "Req. Delivery Date": selectedPeriod,
       "SO Create Date": selectedCreationPeriod,
-      "Region": selectedRegion,
-      "Countries": selectedCountry
     };
     const csvContent = Object.entries(data).map(([k, v]) => `${k},"${v}"`).join("\n");
     const blob = new Blob([csvContent], { type: "text/csv" });
@@ -177,93 +266,6 @@ export default function Dashboard() {
     a.click();
     URL.revokeObjectURL(url);
   };
-
-  const greeting = useMemo(() => {
-    const h = new Date().getHours();
-    if (h < 12) return "Good morning";
-    if (h < 17) return "Good afternoon";
-    return "Good evening";
-  }, []);
-
-  // Derive unique countries with counts, sorted by frequency (most first)
-  const countriesWithCounts = useMemo(() => {
-    if (!orders || orders.length === 0) return [];
-    const countMap = new Map<string, number>();
-    for (const o of orders) {
-      const val = (o.rawData["country"] || "").trim();
-      if (val) countMap.set(val, (countMap.get(val) || 0) + 1);
-    }
-    return Array.from(countMap.entries())
-      .map(([name, count]) => ({ name, count }))
-      .sort((a, b) => b.count - a.count);
-  }, [orders]);
-
-  const filteredOrders = useMemo(() => {
-    if (!orders || orders.length === 0) return [];
-
-    const now = new Date();
-    const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-
-    const isInPeriod = (dateString: string, periodType: string) => {
-      if (periodType === "all") return true;
-      const date = new Date(dateString);
-      if (Number.isNaN(date.getTime())) return true;
-
-      switch (periodType) {
-        case "today": {
-          return (
-            date.getFullYear() === startOfToday.getFullYear() &&
-            date.getMonth() === startOfToday.getMonth() &&
-            date.getDate() === startOfToday.getDate()
-          );
-        }
-        case "7_days": {
-          const end = new Date(startOfToday);
-          end.setDate(end.getDate() + 7);
-          return date >= startOfToday && date <= end;
-        }
-        case "14_days": {
-          const end = new Date(startOfToday);
-          end.setDate(end.getDate() + 14);
-          return date >= startOfToday && date <= end;
-        }
-        case "over_30_days": {
-          const start = new Date(startOfToday);
-          start.setDate(start.getDate() + 30);
-          return date > start;
-        }
-        default:
-          return true;
-      }
-    };
-
-    return orders.filter((o) => {
-      if (!isInPeriod(o.reqDelivery, selectedPeriod)) return false;
-      if (!isInPeriod(o.soCreateDate, selectedCreationPeriod)) return false;
-
-      // Countries filter (only under NAM)
-      if (selectedRegion === "NAM" && selectedCountry !== "all") {
-        const country = (o.rawData["country"] || "").trim();
-        if (country !== selectedCountry) return false;
-      }
-
-      return true;
-    });
-  }, [orders, selectedPeriod, selectedCreationPeriod, selectedRegion, selectedCountry]);
-
-  const filteredSummary = useMemo(() => {
-    if (!summary || filteredOrders.length === 0) return summary;
-    const miss = filteredOrders.filter((r) => r.status === "Miss").length;
-    const hit = filteredOrders.filter((r) => r.status === "Hit").length;
-    const total = filteredOrders.length;
-    return {
-      ...summary,
-      totalOrders: total,
-      otifMiss: miss,
-      otifHit: hit,
-      missRate: total > 0 ? Math.round((miss / total) * 1000) / 10 : 0,
-    };
-  }, [summary, filteredOrders]);
 
   if (!summary || orders.length === 0) {
     return (
@@ -359,10 +361,7 @@ export default function Dashboard() {
             aria-haspopup="dialog"
             aria-controls="manage-filters-popup"
           >
-            <div className="flex shrink-0 -space-x-0.5" aria-hidden>
-              <Calendar className="h-4 w-4 text-muted-foreground" />
-              <Globe className="h-4 w-4 text-muted-foreground" />
-            </div>
+            <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
             <span className="max-w-[7.5rem] truncate text-sm font-semibold text-foreground sm:max-w-none">
               Active Filters
             </span>
@@ -386,7 +385,7 @@ export default function Dashboard() {
           createPortal(
             <>
               <div
-                className="active-filters-overlay fixed inset-0 z-[200] bg-black/30 backdrop-blur-[3px] dark:bg-black/55"
+                className="active-filters-overlay fixed inset-0 z-[200] bg-black/40 dark:bg-black/55"
                 aria-hidden
                 onClick={() => setFiltersTrayOpen(false)}
               />
@@ -404,10 +403,7 @@ export default function Dashboard() {
               >
                 <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4 py-3 dark:border-white/[0.08]">
                   <div className="flex min-w-0 items-center gap-2">
-                    <div className="flex shrink-0 -space-x-0.5" aria-hidden>
-                      <Calendar className="h-4 w-4 text-muted-foreground" />
-                      <Globe className="h-4 w-4 text-muted-foreground" />
-                    </div>
+                    <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
                     <h2 id="manage-filters-popup-title" className="truncate text-sm font-semibold text-foreground">
                       Manage filters
                     </h2>
@@ -434,7 +430,7 @@ export default function Dashboard() {
                           <button
                             key={p.value}
                             type="button"
-                            onClick={() => setSelectedPeriod(p.value)}
+                            onClick={() => setPeriod(p.value)}
                             className={selectedPeriod === p.value ? "filter-chip-active whitespace-nowrap" : "filter-chip-inactive whitespace-nowrap"}
                           >
                             {p.label}
@@ -455,7 +451,7 @@ export default function Dashboard() {
                           <button
                             key={p.value}
                             type="button"
-                            onClick={() => setSelectedCreationPeriod(p.value)}
+                            onClick={() => setCreationPeriod(p.value)}
                             className={selectedCreationPeriod === p.value ? "filter-chip-active whitespace-nowrap" : "filter-chip-inactive whitespace-nowrap"}
                           >
                             {p.label}
@@ -465,86 +461,9 @@ export default function Dashboard() {
                     </div>
                   </div>
 
+                  {token ? (
                   <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-4 border-t border-border/40 pt-4 dark:border-white/[0.08]">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                      <span className="mr-1 whitespace-nowrap text-[13px] font-medium text-muted-foreground">Region</span>
                       <div className="flex flex-wrap items-center gap-1.5">
-                        {regions.map((r) => (
-                          <button
-                            key={r.value}
-                            type="button"
-                            onClick={() => setSelectedRegion(r.value)}
-                            className={selectedRegion === r.value ? "filter-chip-active" : "filter-chip-inactive"}
-                          >
-                            {r.label}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-
-                    {selectedRegion === "NAM" && countriesWithCounts.length > 0 && (
-                      <>
-                        <div className="hidden h-6 w-px shrink-0 bg-border/60 dark:bg-white/[0.1] sm:block" />
-                        <div className="flex flex-wrap items-center gap-1.5">
-                          <MapPin className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                          <span className="mr-1 whitespace-nowrap text-[13px] font-medium text-muted-foreground">Countries</span>
-                          <Popover open={countryDropdownOpen} onOpenChange={setCountryDropdownOpen}>
-                            <PopoverTrigger asChild>
-                              <button
-                                id="filter-country"
-                                type="button"
-                                className={cn(
-                                  "region-select flex min-w-[140px] items-center justify-between gap-2",
-                                  selectedCountry !== "all" && "filter-chip-active border-primary text-primary-foreground",
-                                )}
-                              >
-                                <span className="max-w-[140px] truncate">{selectedCountry === "all" ? "All Countries" : selectedCountry}</span>
-                                <ChevronDown className="h-3.5 w-3.5 shrink-0 opacity-50" />
-                              </button>
-                            </PopoverTrigger>
-                            <PopoverContent
-                              align="start"
-                              side="bottom"
-                              sideOffset={6}
-                              className="z-[230] w-64 border-border/60 p-0 dark:border-white/[0.1]"
-                            >
-                              <div className="max-h-[min(24rem,70vh)] overflow-y-auto py-1">
-                                <button
-                                  type="button"
-                                  onClick={() => { setSelectedCountry("all"); setCountryDropdownOpen(false); }}
-                                  className={cn(
-                                    "flex w-full items-center justify-between px-3 py-2.5 text-[13px] transition-colors hover:bg-accent",
-                                    selectedCountry === "all" && "bg-accent font-medium text-primary",
-                                  )}
-                                >
-                                  <span className="truncate pr-2 text-left">All Countries</span>
-                                </button>
-                                {countriesWithCounts.map((c) => (
-                                  <button
-                                    key={c.name}
-                                    type="button"
-                                    onClick={() => { setSelectedCountry(c.name); setCountryDropdownOpen(false); }}
-                                    className={cn(
-                                      "flex w-full items-center justify-between gap-2 px-3 py-2.5 text-[13px] transition-colors hover:bg-accent",
-                                      selectedCountry === c.name && "bg-accent font-medium text-primary",
-                                    )}
-                                  >
-                                    <span className="min-w-0 truncate text-left">{c.name}</span>
-                                    <span className="shrink-0 tabular-nums text-xs text-muted-foreground">{c.count.toLocaleString()}</span>
-                                  </button>
-                                ))}
-                              </div>
-                            </PopoverContent>
-                          </Popover>
-                        </div>
-                      </>
-                    )}
-
-                    {token && (
-                      <>
-                        <div className="hidden h-6 w-px shrink-0 bg-border/60 dark:bg-white/[0.1] sm:block" />
-                        <div className="flex flex-wrap items-center gap-1.5">
                           <Popover open={favDropdownOpen} onOpenChange={setFavDropdownOpen}>
                             <PopoverTrigger asChild>
                               <Button
@@ -631,9 +550,8 @@ export default function Dashboard() {
                             </div>
                           )}
                         </div>
-                      </>
-                    )}
                   </div>
+                  ) : null}
                 </div>
               </div>
             </>,
@@ -651,6 +569,35 @@ export default function Dashboard() {
           <KPICard label="OTIF Miss Prediction" value={filteredSummary?.otifMiss ?? summary.otifMiss} description="Predicted to miss delivery" icon={XCircle} variant="risk" />
           <KPICard label="OTIF Hit Prediction" value={filteredSummary?.otifHit ?? summary.otifHit} description="Predicted on-time delivery" icon={CheckCircle} variant="success" />
           <KPICard label="Miss Rate Prediction" value={`${filteredSummary?.missRate ?? summary.missRate}%`} description="Orders predicted to miss" icon={TrendingDown} variant="info" />
+        </div>
+
+        <div className="mb-6 rounded-xl border border-border/60 bg-card/40 p-5 shadow-sm backdrop-blur-sm dark:border-white/[0.08]">
+          <div className="mb-1 flex items-center gap-2">
+            <Users className="h-4 w-4 text-muted-foreground" aria-hidden />
+            <h3 className="text-sm font-semibold text-foreground">Customer focus</h3>
+          </div>
+          <p className="mb-4 text-xs text-muted-foreground">
+            Customers with the most predicted OTIF misses in the current date filters (sorted by total misses)
+          </p>
+          {topCustomersByMiss.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No predicted misses in this selection.</p>
+          ) : (
+            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+              {topCustomersByMiss.map(([custName, missCount], i) => (
+                <div
+                  key={`${custName}-${i}`}
+                  className="flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-background/50 px-3 py-2.5 text-sm"
+                >
+                  <span className="min-w-0 truncate font-medium text-foreground" title={custName}>
+                    {custName}
+                  </span>
+                  <span className="shrink-0 tabular-nums text-sm font-semibold text-destructive">
+                    {missCount.toLocaleString()} <span className="font-normal text-muted-foreground">miss</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
         </div>
 
         {/* Chart */}

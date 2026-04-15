@@ -150,28 +150,54 @@ export function useCSVPreview() {
           getAny("otif_miss", "prob_miss", "risk_score", "riskscore", "miss probability", "probability_miss", "miss_prob", "risk_percent")
         );
 
+        const inferStatusFromText = (): "Hit" | "Miss" => {
+          if (
+            normalizedStatus.includes("miss") ||
+            normalizedStatus.includes("late") ||
+            normalizedStatus === "0" ||
+            normalizedStatus === "false" ||
+            normalizedStatus === "no" ||
+            normalizedStatus === "n"
+          ) {
+            return "Miss";
+          }
+          if (
+            normalizedStatus.includes("hit") ||
+            normalizedStatus.includes("on-time") ||
+            normalizedStatus.includes("ontime") ||
+            normalizedStatus.includes("on time") ||
+            normalizedStatus === "1" ||
+            normalizedStatus === "true" ||
+            normalizedStatus === "yes" ||
+            normalizedStatus === "y"
+          ) {
+            return "Hit";
+          }
+          return "Hit";
+        };
+
         let status: "Hit" | "Miss";
-        // If we have explicit probabilities, let them drive the label to avoid contradictions
-        if (probHit !== undefined && probMiss !== undefined) {
-          status = probHit >= probMiss ? "Hit" : "Miss";
-        } else if (
-          normalizedStatus.includes("miss") ||
-          normalizedStatus.includes("late") ||
-          normalizedStatus === "0" ||
-          normalizedStatus === "false"
-        ) {
-          status = "Miss";
-        } else if (
-          normalizedStatus.includes("hit") ||
-          normalizedStatus.includes("on-time") ||
-          normalizedStatus.includes("ontime") ||
-          normalizedStatus.includes("on time") ||
-          normalizedStatus === "1" ||
-          normalizedStatus === "true"
-        ) {
-          status = "Hit";
+        // Use null-safe probability checks (parseProb returns number | null)
+        if (probHit != null && probMiss != null) {
+          const diff = probHit - probMiss;
+          if (Math.abs(diff) < 0.05) {
+            status = inferStatusFromText();
+          } else {
+            status = diff > 0 ? "Hit" : "Miss";
+          }
+        } else if (probMiss != null) {
+          status = probMiss >= 50 ? "Miss" : "Hit";
+        } else if (probHit != null) {
+          status = probHit >= 50 ? "Hit" : "Miss";
         } else {
-          status = "Hit";
+          status = inferStatusFromText();
+        }
+
+        const predHitBin = getAny("predicted_hit", "predicted class", "y_pred", "prediction_label");
+        if (probHit == null && probMiss == null && predHitBin.trim() !== "") {
+          const p = predHitBin.trim().toLowerCase();
+          if (p === "0" || p === "miss") status = "Miss";
+          else if (p === "1" || p === "hit") status = "Hit";
         }
 
         // Derive riskScore — same logic as Streamlit (risk_score = 1 - hit_probability)
@@ -194,54 +220,50 @@ export function useCSVPreview() {
         // Clamp to 0–100 to prevent overflow
         riskScore = Math.max(0, Math.min(100, Math.round(riskScore * 10) / 10));
 
-        // Derive lead time (gap days between request lead and material lead)
-        // Priority: explicit column → f_lead_gap_days → f_request - f_material → raw dates
-        let leadTime = getAny("lead_time", "leadtime", "lead days", "lead_days");
-        if (!leadTime) {
-          const gap = parseFloat(getAny("f_lead_gap_days", "lead_gap_days", "gap_days"));
-          if (Number.isFinite(gap)) {
-            leadTime = String(Math.round(gap));
+        // Lead time column = supply cushion / gap days (same as backend f_lead_gap_days):
+        // f_lead_gap_days = f_request_lead_days - f_material_lead_days = (RDD - MatAvl) in days.
+        // Prefer engineered features before generic CSV "lead_time" (often a different definition).
+        let leadTime = "";
+        const gapParsed = parseFloat(getAny("f_lead_gap_days", "lead_gap_days", "gap_days", "f_lead_gap"));
+        if (Number.isFinite(gapParsed)) {
+          leadTime = String(Math.round(gapParsed));
+        } else {
+          const reqLead = parseFloat(getAny("f_request_lead_days", "request_lead_days", "request_lead"));
+          const matLead = parseFloat(getAny("f_material_lead_days", "material_lead_days", "material_lead"));
+          if (Number.isFinite(reqLead) && Number.isFinite(matLead)) {
+            leadTime = String(Math.round(reqLead - matLead));
           } else {
-            const reqLead = parseFloat(getAny("f_request_lead_days", "request_lead_days", "request_lead"));
-            const matLead = parseFloat(getAny("f_material_lead_days", "material_lead_days", "material_lead"));
-            if (Number.isFinite(reqLead) && Number.isFinite(matLead)) {
-              leadTime = String(Math.round(reqLead - matLead));
-            } else {
-              // Compute from raw date columns (same as backend feature_engineering.py):
-              // f_request_lead_days = (Requested Delivery Date - SO create date).days
-              // f_material_lead_days = (Mat_Avl_Date_OTIF - SO create date).days
-              // f_lead_gap_days = f_request_lead_days - f_material_lead_days
-              //                 = (RDD - Mat_Avl_Date).days
-              const rddStr = getAny("requested delivery date", "requested_delivery_date",
-                "req. deliv. date", "req_delivery", "requested_delivery", "req delivery date", "rdd");
-              const matAvlStr = getAny("mat_avl_date_otif", "mat avl date otif",
-                "material availability date", "mat_avail_date", "mad");
-              const soDateStr = getAny("so create date", "so_create_date",
-                "order date", "order_date", "sales order date", "so_date");
+            const rddStr = getAny("requested delivery date", "requested_delivery_date",
+              "req. deliv. date", "req_delivery", "requested_delivery", "req delivery date", "rdd");
+            const matAvlStr = getAny("mat_avl_date_otif", "mat avl date otif",
+              "material availability date", "mat_avail_date", "mad");
+            const soDateStr = getAny("so create date", "so_create_date",
+              "order date", "order_date", "sales order date", "so_date");
 
-              const parseDate = (s: string) => {
-                if (!s) return null;
-                const d = new Date(s);
-                return isNaN(d.getTime()) ? null : d;
-              };
+            const parseDate = (s: string) => {
+              if (!s) return null;
+              const d = new Date(s);
+              return isNaN(d.getTime()) ? null : d;
+            };
 
-              const rddDate = parseDate(rddStr);
-              const matAvlDate = parseDate(matAvlStr);
-              const soDate = parseDate(soDateStr);
+            const rddDate = parseDate(rddStr);
+            const matAvlDate = parseDate(matAvlStr);
+            const soDate = parseDate(soDateStr);
 
-              if (rddDate && matAvlDate) {
-                // lead_gap = (RDD - MatAvl) in days
-                const diffMs = rddDate.getTime() - matAvlDate.getTime();
-                leadTime = String(Math.round(diffMs / (1000 * 60 * 60 * 24)));
-              } else if (rddDate && soDate && matAvlDate) {
-                // f_request_lead = (RDD - SO).days, f_material_lead = (MatAvl - SO).days
-                const reqMs = rddDate.getTime() - soDate.getTime();
-                const matMs = matAvlDate.getTime() - soDate.getTime();
-                const gapDays = (reqMs - matMs) / (1000 * 60 * 60 * 24);
-                leadTime = String(Math.round(gapDays));
-              }
+            if (rddDate && matAvlDate) {
+              const diffMs = rddDate.getTime() - matAvlDate.getTime();
+              leadTime = String(Math.round(diffMs / (1000 * 60 * 60 * 24)));
+            } else if (rddDate && soDate && matAvlDate) {
+              const reqMs = rddDate.getTime() - soDate.getTime();
+              const matMs = matAvlDate.getTime() - soDate.getTime();
+              const gapDays = (reqMs - matMs) / (1000 * 60 * 60 * 24);
+              leadTime = String(Math.round(gapDays));
             }
           }
+        }
+        if (!leadTime) {
+          const fallbackLt = getAny("lead_time", "leadtime", "lead days", "lead_days");
+          if (fallbackLt) leadTime = fallbackLt;
         }
 
         // Extract SHAP risk signals from top features

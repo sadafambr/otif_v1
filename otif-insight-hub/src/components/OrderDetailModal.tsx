@@ -1,6 +1,67 @@
-import { TriangleAlert, Sparkles, BarChart3, Loader2 } from "lucide-react";
+import type { ReactNode } from "react";
+import { TriangleAlert, Sparkles, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { OrderDetail } from "@/types/otif";
+
+function StructuredAiExplanation({ text }: { text: string }) {
+  const lines = text.split("\n");
+  const nodes: ReactNode[] = [];
+  let bulletBuf: string[] = [];
+  let key = 0;
+
+  const flushBullets = () => {
+    if (bulletBuf.length === 0) return;
+    nodes.push(
+      <ul key={`bullets-${key++}`} className="ml-0.5 list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-foreground/90">
+        {bulletBuf.map((item, i) => (
+          <li key={i}>{item}</li>
+        ))}
+      </ul>,
+    );
+    bulletBuf = [];
+  };
+
+  for (const raw of lines) {
+    const line = raw.trimEnd();
+    const t = line.trim();
+    if (!t) {
+      flushBullets();
+      continue;
+    }
+    if (t.startsWith("- ")) {
+      bulletBuf.push(t.slice(2).trim());
+      continue;
+    }
+    flushBullets();
+
+    if (/^risk\s*:/i.test(t)) {
+      nodes.push(
+        <p key={`line-${key++}`} className="text-sm font-semibold text-foreground">
+          {line.trim()}
+        </p>,
+      );
+      continue;
+    }
+    if (/^(key risk signals|recommended actions)\s*:/i.test(t)) {
+      const label = t.replace(/\s*:\s*$/, "");
+      nodes.push(
+        <p key={`line-${key++}`} className="mt-4 text-sm font-semibold text-foreground first:mt-0">
+          {label}:
+        </p>,
+      );
+      continue;
+    }
+
+    nodes.push(
+      <p key={`line-${key++}`} className="text-sm leading-relaxed text-foreground/90">
+        {line.trim()}
+      </p>,
+    );
+  }
+  flushBullets();
+
+  return <div className="space-y-2">{nodes}</div>;
+}
 
 interface OrderDetailModalProps {
   detail: OrderDetail | null;
@@ -77,20 +138,7 @@ export function OrderDetailModal({ detail, loading, onClose }: OrderDetailModalP
                     <Sparkles className="h-4 w-4 text-primary" />
                     <h4 className="text-sm font-semibold text-foreground">AI Explanation</h4>
                   </div>
-                  <p className="whitespace-pre-line text-sm leading-relaxed text-foreground/90">
-                    {detail.genaiSummary}
-                  </p>
-                </div>
-              )}
-
-              {/* SHAP One-liner */}
-              {detail.shapOneLiner && (
-                <div className="flex items-start gap-2 rounded-lg border bg-muted/40 px-4 py-3">
-                  <BarChart3 className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                  <p className="text-sm text-muted-foreground">
-                    <span className="font-medium text-foreground">SHAP Insight: </span>
-                    {detail.shapOneLiner}
-                  </p>
+                  <StructuredAiExplanation text={detail.genaiSummary} />
                 </div>
               )}
 
@@ -104,22 +152,9 @@ export function OrderDetailModal({ detail, loading, onClose }: OrderDetailModalP
                         key={driver.rank}
                         className={`rounded-lg border p-3 ${driver.flag ? "border-destructive/30 bg-destructive/5" : "bg-muted/30"}`}
                       >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            {driver.flag && <TriangleAlert className="h-3.5 w-3.5 text-destructive" />}
-                            <span className="text-sm font-medium text-foreground">{driver.name}</span>
-                          </div>
-                          <span className="text-xs font-mono text-muted-foreground">{driver.value}</span>
-                        </div>
-                        <p className="mt-1 text-xs text-muted-foreground">{driver.explanation}</p>
-                        <div className="mt-2 flex items-center gap-2">
-                          <div className="h-1.5 flex-1 rounded-full bg-muted">
-                            <div
-                              className="h-1.5 rounded-full bg-primary transition-all"
-                              style={{ width: `${Math.min(100, (driver.shapValue / driver.maxShap) * 100)}%` }}
-                            />
-                          </div>
-                          <span className="text-xs font-mono text-muted-foreground">{driver.shapValue.toFixed(2)}</span>
+                        <div className="flex items-center gap-2">
+                          {driver.flag && <TriangleAlert className="h-3.5 w-3.5 shrink-0 text-destructive" />}
+                          <span className="text-sm font-medium text-foreground">{driver.name}</span>
                         </div>
                       </div>
                     ))}

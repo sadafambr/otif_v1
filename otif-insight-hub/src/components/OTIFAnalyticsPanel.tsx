@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import {
   Package, TrendingUp, TrendingDown, BarChart3,
-  PieChart as PieChartIcon, Activity, Globe, Building2,
-  Factory, Boxes, AlertTriangle, ChevronDown,
+  PieChart as PieChartIcon, Activity, Building2,
+  Factory, Boxes,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
@@ -10,35 +10,26 @@ import {
 } from "recharts";
 import type { OTIFRecord } from "@/types/otif";
 
-const PIE_COLORS = [
-  "hsl(220, 70%, 55%)", "hsl(0, 72%, 51%)", "hsl(32, 95%, 55%)",
-  "hsl(160, 84%, 39%)", "hsl(280, 60%, 55%)", "hsl(180, 60%, 45%)",
-  "hsl(340, 65%, 50%)", "hsl(100, 55%, 45%)", "hsl(50, 80%, 50%)",
-  "hsl(200, 65%, 50%)",
-];
-
-const HISTOGRAM_COLORS = [
-  "hsl(220, 70%, 55%)", "hsl(32, 95%, 55%)", "hsl(160, 84%, 39%)",
-  "hsl(280, 60%, 55%)", "hsl(0, 72%, 51%)",
-];
-
-function getColor(palette: string[], i: number): string {
-  return palette[i % palette.length];
-}
-
 interface DimensionDef {
   id: string;
   label: string;
-  icon: typeof Globe;
+  icon: typeof Package;
   accessor: (o: OTIFRecord) => string;
 }
 
 const MISS_DIMENSIONS: DimensionDef[] = [
-  { id: "region", label: "Region", icon: Globe, accessor: (o) => (o.rawData?.["state - province"] ?? o.rawData?.["country"] ?? "").trim() || "(blank)" },
   { id: "businessUnit", label: "Business Unit", icon: Building2, accessor: (o) => (o.rawData?.["division of business name"] ?? "").trim() || "(blank)" },
   { id: "plant", label: "Plant", icon: Factory, accessor: (o) => o.plant || "(blank)" },
   { id: "material", label: "Material", icon: Boxes, accessor: (o) => o.material || "(blank)" },
   { id: "customer", label: "Customer", icon: Package, accessor: (o) => o.customer || "(blank)" },
+];
+
+const CUSTOMER_DIMENSION = MISS_DIMENSIONS.find((d) => d.id === "customer")!;
+
+/** Miss overview row: Customer last for emphasis. */
+const TOP_MISS_OVERVIEW_DIMENSIONS: DimensionDef[] = [
+  ...MISS_DIMENSIONS.filter((d) => d.id !== "customer"),
+  CUSTOMER_DIMENSION,
 ];
 
 function buildMissRanking(orders: OTIFRecord[], accessor: (o: OTIFRecord) => string, topN = 3) {
@@ -124,8 +115,6 @@ function buildLeadTimeBuckets(orders: OTIFRecord[]) {
   }));
 }
 
-const HIGH_RISK_THRESHOLD = 75;
-
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
   return (
@@ -140,25 +129,12 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   );
 };
 
-const MissRateTooltip = ({ active, payload, label }: any) => {
-  if (!active || !payload?.length) return null;
-  return (
-    <div className="glass-popover rounded-lg px-3 py-2 text-sm shadow-md">
-      <p className="font-medium text-foreground mb-1">{payload[0]?.payload?.fullName ?? label}</p>
-      <p className="text-xs text-amber-600">Miss Rate: {payload[0]?.value}%</p>
-      <p className="text-xs text-muted-foreground">Miss: {payload[0]?.payload?.miss} / Total: {payload[0]?.payload?.total}</p>
-    </div>
-  );
-};
-
 interface OTIFAnalyticsPanelProps {
   orders: OTIFRecord[];
 }
 
 export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
-  const [selectedDimension, setSelectedDimension] = useState("plant");
-  const [missRateDimension, setMissRateDimension] = useState("region");
-  const [missRateDropdownOpen, setMissRateDropdownOpen] = useState(false);
+  const [selectedDimension, setSelectedDimension] = useState("customer");
 
   const overallStats = useMemo(() => {
     const total = orders.length;
@@ -166,14 +142,11 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
     const hit = total - miss;
     const avgLeadTime =
       orders.reduce((s, r) => s + (parseInt(r.leadTime, 10) || 0), 0) / (total || 1);
-    const avgRiskScore =
-      orders.reduce((s, r) => s + (r.riskScore || 0), 0) / (total || 1);
     return {
       total, miss, hit,
       missRate: total > 0 ? Math.round((miss / total) * 1000) / 10 : 0,
       hitRate: total > 0 ? Math.round((hit / total) * 1000) / 10 : 0,
       avgLeadTime: Math.round(avgLeadTime * 10) / 10,
-      avgRiskScore: Math.round(avgRiskScore * 10) / 10,
     };
   }, [orders]);
 
@@ -193,69 +166,30 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
     return result;
   }, [orders]);
 
-  const missRateDimConfig = MISS_DIMENSIONS.find((d) => d.id === missRateDimension)!;
-  const missRateChartData = useMemo(
-    () => buildDimensionStats(orders, missRateDimConfig.accessor)
-      .sort((a, b) => b.missRate - a.missRate)
-      .slice(0, 10),
-    [orders, missRateDimConfig]
-  );
-
-  const missVolumePie = useMemo(() => {
-    const data = buildDimensionStats(orders, missRateDimConfig.accessor)
-      .sort((a, b) => b.miss - a.miss)
-      .slice(0, 8);
-    return data.map((d, i) => ({
-      name: d.name,
-      fullName: d.fullName,
-      value: d.miss,
-      color: getColor(PIE_COLORS, i),
-    }));
-  }, [orders, missRateDimConfig]);
-
   const detailedBreakdown = useMemo(
-    () => buildDimensionStats(orders, missRateDimConfig.accessor).sort((a, b) => b.missRate - a.missRate),
-    [orders, missRateDimConfig]
-  );
-
-  const highRiskMissOrders = useMemo(
-    () => orders.filter((r) => r.status === "Miss" && r.riskScore >= HIGH_RISK_THRESHOLD),
+    () => buildDimensionStats(orders, CUSTOMER_DIMENSION.accessor).sort((a, b) => b.miss - a.miss),
     [orders]
   );
 
   const analyticsDimConfig = MISS_DIMENSIONS.find((d) => d.id === selectedDimension)!;
-  const dimensionData = useMemo(
-    () => buildDistribution(orders, analyticsDimConfig.accessor),
-    [orders, analyticsDimConfig]
-  );
+  const dimensionData = useMemo(() => {
+    const data = buildDistribution(orders, analyticsDimConfig.accessor);
+    if (selectedDimension === "customer") {
+      return [...data].sort((a, b) => b.miss - a.miss);
+    }
+    return data;
+  }, [orders, analyticsDimConfig, selectedDimension]);
 
   const leadTimeBuckets = useMemo(() => buildLeadTimeBuckets(orders), [orders]);
-
-  const riskScoreBuckets = useMemo(() => {
-    const buckets = [
-      { name: "0-20%", min: 0, max: 20, count: 0 },
-      { name: "21-40%", min: 21, max: 40, count: 0 },
-      { name: "41-60%", min: 41, max: 60, count: 0 },
-      { name: "61-80%", min: 61, max: 80, count: 0 },
-      { name: "81-100%", min: 81, max: 100, count: 0 },
-    ];
-    for (const o of orders) {
-      const score = o.riskScore;
-      const bucket = buckets.find((b) => score >= b.min && score <= b.max);
-      if (bucket) bucket.count++;
-    }
-    return buckets;
-  }, [orders]);
 
   return (
     <div className="space-y-6">
       {/* Summary KPI cards */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
         <StatCard label="Total Orders" value={overallStats.total.toLocaleString()} icon={Package} />
         <StatCard label="Hit Rate" value={`${overallStats.hitRate}%`} icon={TrendingUp} accent="text-success" />
         <StatCard label="Miss Rate" value={`${overallStats.missRate}%`} icon={TrendingDown} accent="text-destructive" />
         <StatCard label="Avg Lead Time" value={`${overallStats.avgLeadTime} days`} icon={Activity} />
-        <StatCard label="Avg Risk Score" value={`${overallStats.avgRiskScore}%`} icon={BarChart3} />
         <StatCard label="Total Miss" value={overallStats.miss.toLocaleString()} icon={TrendingDown} accent="text-destructive" />
       </div>
 
@@ -263,7 +197,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
       <div>
         <h2 className="text-lg font-semibold text-foreground mb-4">OTIF Miss Overview</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {MISS_DIMENSIONS.slice(0, 4).map((dim) => {
+          {TOP_MISS_OVERVIEW_DIMENSIONS.map((dim) => {
             const Icon = dim.icon;
             const ranking = topMissRankings[dim.id] || [];
             return (
@@ -292,164 +226,38 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
         </div>
       </div>
 
-      {/* OTIF Miss Rate by Dimension */}
+      {/* Detailed Breakdown by Customer */}
       <div className="analytics-glass-card p-5">
-        <div className="mb-4 flex items-center justify-between">
-          <div>
-            <h3 className="text-base font-semibold text-foreground">OTIF Miss Rate by Dimension</h3>
-            <p className="text-xs text-muted-foreground">Percentage of orders predicted to miss OTIF</p>
-          </div>
-          <div className="relative">
-            <button
-              onClick={() => setMissRateDropdownOpen((prev) => !prev)}
-              className="glass-popover flex min-w-[140px] items-center justify-between gap-2 rounded-lg px-3 py-1.5 text-sm font-medium text-foreground transition-all duration-200 hover:bg-muted/40"
-            >
-              By {missRateDimConfig.label}
-              <ChevronDown className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${missRateDropdownOpen ? "rotate-180" : ""}`} />
-            </button>
-            {missRateDropdownOpen && (
-              <div className="glass-popover absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-lg shadow-lg">
-                {MISS_DIMENSIONS.map((dim) => (
-                  <button
-                    key={dim.id}
-                    onClick={() => { setMissRateDimension(dim.id); setMissRateDropdownOpen(false); }}
-                    className={`w-full text-left px-3 py-2 text-sm hover:bg-muted/50 transition-colors ${
-                      missRateDimension === dim.id ? "bg-primary/10 text-primary font-medium" : ""
-                    }`}
-                  >
-                    By {dim.label}
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
+        <div className="mb-4">
+          <h3 className="text-base font-semibold text-foreground">Miss rate by customer</h3>
+          <p className="text-xs text-muted-foreground">Sorted by total predicted misses (highest first)</p>
         </div>
-        <ResponsiveContainer width="100%" height={320}>
-          <BarChart data={missRateChartData}>
-            <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 13%, 91%)" />
-            <XAxis dataKey="name" tick={{ fontSize: 11 }} interval={0} angle={-20} textAnchor="end" height={60} />
-            <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `${v}%`} domain={[0, 100]} />
-            <Tooltip content={<MissRateTooltip />} />
-            <Bar dataKey="missRate" name="Miss Rate %" radius={[4, 4, 0, 0]} fill="hsl(32, 95%, 55%)" />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
-
-      {/* Miss Volume Pie + Detailed Breakdown Table */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="analytics-glass-card p-5">
-          <div className="mb-1">
-            <h3 className="text-base font-semibold text-foreground">Miss Volume Distribution</h3>
-            <p className="text-xs text-muted-foreground">By {missRateDimConfig.label}</p>
-          </div>
-          <ResponsiveContainer width="100%" height={300}>
-            <PieChart>
-              <Pie
-                data={missVolumePie}
-                dataKey="value"
-                nameKey="name"
-                cx="50%"
-                cy="50%"
-                outerRadius={110}
-                label={({ name, value }) => `${name}: ${value}`}
-                labelLine
-              >
-                {missVolumePie.map((entry, i) => (
-                  <Cell key={i} fill={entry.color} />
-                ))}
-              </Pie>
-              <Tooltip content={<CustomTooltip />} />
-              <Legend />
-            </PieChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="analytics-glass-card p-5">
-          <div className="mb-4">
-            <h3 className="text-base font-semibold text-foreground">Detailed Breakdown</h3>
-            <p className="text-xs text-muted-foreground">By {missRateDimConfig.label}</p>
-          </div>
-          <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10 bg-muted backdrop-blur-md">
-                <tr className="border-b">
-                  <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">{missRateDimConfig.label}</th>
-                  <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Total</th>
-                  <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Miss</th>
-                  <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Miss Rate</th>
+        <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
+          <table className="w-full text-sm">
+            <thead className="sticky top-0 z-10 border-b border-border bg-muted">
+              <tr className="border-b">
+                <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">{CUSTOMER_DIMENSION.label}</th>
+                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Total</th>
+                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Miss</th>
+                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Miss Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+              {detailedBreakdown.map((row) => (
+                <tr key={row.fullName} className="border-b border-border/50 hover:bg-muted/30">
+                  <td className="py-2.5 text-foreground font-medium" title={row.fullName}>{row.name}</td>
+                  <td className="py-2.5 text-right text-muted-foreground">{row.total.toLocaleString()}</td>
+                  <td className="py-2.5 text-right text-destructive font-semibold">{row.miss.toLocaleString()}</td>
+                  <td className={`py-2.5 text-right font-semibold ${
+                    row.missRate >= 50 ? "text-destructive" : row.missRate >= 30 ? "text-amber-600" : "text-success"
+                  }`}>
+                    {row.missRate}%
+                  </td>
                 </tr>
-              </thead>
-              <tbody>
-                {detailedBreakdown.map((row) => (
-                  <tr key={row.fullName} className="border-b border-border/50 hover:bg-muted/30">
-                    <td className="py-2.5 text-foreground font-medium" title={row.fullName}>{row.name}</td>
-                    <td className="py-2.5 text-right text-muted-foreground">{row.total.toLocaleString()}</td>
-                    <td className="py-2.5 text-right text-destructive font-semibold">{row.miss.toLocaleString()}</td>
-                    <td className={`py-2.5 text-right font-semibold ${
-                      row.missRate >= 50 ? "text-destructive" : row.missRate >= 30 ? "text-amber-600" : "text-success"
-                    }`}>
-                      {row.missRate}%
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+              ))}
+            </tbody>
+          </table>
         </div>
-      </div>
-
-      {/* High Risk Miss Orders */}
-      <div className="analytics-glass-card p-5">
-        <div className="mb-4 flex items-center gap-2">
-          <AlertTriangle className="h-4 w-4 text-destructive" />
-          <div>
-            <h3 className="text-base font-semibold text-foreground">High Risk Miss Orders</h3>
-            <p className="text-xs text-muted-foreground">
-              Orders with OTIF risk score &ge; {HIGH_RISK_THRESHOLD}% &mdash; {highRiskMissOrders.length.toLocaleString()} orders
-            </p>
-          </div>
-        </div>
-        {highRiskMissOrders.length === 0 ? (
-          <p className="text-sm text-muted-foreground py-4">No high-risk miss orders found.</p>
-        ) : (
-          <div className="overflow-x-auto max-h-[360px] overflow-y-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 z-10 bg-muted backdrop-blur-md">
-                <tr className="border-b">
-                  <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Sales Order</th>
-                  <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Customer</th>
-                  <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Material</th>
-                  <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Plant</th>
-                  <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Lead Time</th>
-                  <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Risk Score</th>
-                  <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">Req. Delivery</th>
-                </tr>
-              </thead>
-              <tbody>
-                {highRiskMissOrders.slice(0, 50).map((o) => (
-                  <tr key={o.salesOrder + o.rowNum} className="border-b border-border/50 hover:bg-muted/30">
-                    <td className="py-2.5 text-primary font-medium">{o.salesOrder}</td>
-                    <td className="py-2.5 text-foreground">{o.customer.length > 22 ? o.customer.slice(0, 19) + "..." : o.customer}</td>
-                    <td className="py-2.5 text-foreground">{o.material.length > 22 ? o.material.slice(0, 19) + "..." : o.material}</td>
-                    <td className="py-2.5 text-foreground">{o.plant}</td>
-                    <td className="py-2.5 text-right text-muted-foreground">{o.leadTime} days</td>
-                    <td className="py-2.5 text-right">
-                      <span className="inline-flex items-center rounded-full bg-destructive/10 px-2 py-0.5 text-xs font-semibold text-destructive">
-                        {o.riskScore}%
-                      </span>
-                    </td>
-                    <td className="py-2.5 text-muted-foreground">{o.reqDelivery}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-            {highRiskMissOrders.length > 50 && (
-              <p className="text-xs text-muted-foreground text-center py-2">
-                Showing 50 of {highRiskMissOrders.length.toLocaleString()} high-risk orders
-              </p>
-            )}
-          </div>
-        )}
       </div>
 
       {/* Hit/Miss Pie + Lead Time Distribution */}
@@ -500,111 +308,42 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
         </div>
       </div>
 
-      {/* Hit/Miss by Dimension + Risk Score Distribution */}
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <div className="analytics-glass-card p-5">
-          <div className="mb-4 flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <BarChart3 className="h-4 w-4 text-muted-foreground" />
-              <h3 className="text-sm font-semibold text-foreground">
-                Hit/Miss by {analyticsDimConfig.label}
-              </h3>
-            </div>
-            <div className="flex items-center gap-1">
-              {MISS_DIMENSIONS.map((dim) => (
-                <button
-                  key={dim.id}
-                  onClick={() => setSelectedDimension(dim.id)}
-                  className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
-                    selectedDimension === dim.id
-                      ? "bg-primary text-primary-foreground"
-                      : "bg-muted text-muted-foreground hover:bg-muted/80"
-                  }`}
-                >
-                  {dim.label}
-                </button>
-              ))}
-            </div>
-          </div>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={dimensionData} layout="vertical">
-              <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(220, 13%, 91%)" />
-              <XAxis type="number" tick={{ fontSize: 11 }} />
-              <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="hit" stackId="a" fill="hsl(160, 84%, 39%)" name="Hit" />
-              <Bar dataKey="miss" stackId="a" fill="hsl(0, 72%, 51%)" name="Miss" radius={[0, 4, 4, 0]} />
-              <Legend />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-
-        <div className="analytics-glass-card p-5">
-          <div className="mb-4 flex items-center gap-2">
-            <TrendingUp className="h-4 w-4 text-muted-foreground" />
-            <h3 className="text-sm font-semibold text-foreground">Risk Score Distribution</h3>
-          </div>
-          <ResponsiveContainer width="100%" height={300}>
-            <BarChart data={riskScoreBuckets}>
-              <CartesianGrid strokeDasharray="3 3" stroke="hsl(220, 13%, 91%)" />
-              <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} />
-              <Tooltip content={<CustomTooltip />} />
-              <Bar dataKey="count" name="Orders" radius={[4, 4, 0, 0]}>
-                {riskScoreBuckets.map((_, i) => (
-                  <Cell key={i} fill={getColor(HISTOGRAM_COLORS, i)} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </div>
-
-      {/* Miss Rate by dimension table */}
+      {/* Hit/Miss by Dimension */}
       <div className="analytics-glass-card p-5">
-        <div className="mb-4 flex items-center gap-2">
-          <TrendingDown className="h-4 w-4 text-muted-foreground" />
-          <h3 className="text-sm font-semibold text-foreground">
-            Miss Rate by {analyticsDimConfig.label} (Top 10)
-          </h3>
+        <div className="mb-4 flex items-center justify-between">
+          <div className="flex items-center gap-2">
+            <BarChart3 className="h-4 w-4 text-muted-foreground" />
+            <h3 className="text-sm font-semibold text-foreground">
+              Hit/Miss by {analyticsDimConfig.label}
+            </h3>
+          </div>
+          <div className="flex items-center gap-1">
+            {MISS_DIMENSIONS.map((dim) => (
+              <button
+                key={dim.id}
+                onClick={() => setSelectedDimension(dim.id)}
+                className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                  selectedDimension === dim.id
+                    ? "bg-primary text-primary-foreground"
+                    : "bg-muted text-muted-foreground hover:bg-muted/80"
+                }`}
+              >
+                {dim.label}
+              </button>
+            ))}
+          </div>
         </div>
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b">
-                <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">{analyticsDimConfig.label}</th>
-                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Total</th>
-                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Hit</th>
-                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Miss</th>
-                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Miss Rate</th>
-                <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground pl-4">Distribution</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dimensionData.map((row) => (
-                <tr key={row.name} className="border-b border-border/50 hover:bg-muted/30">
-                  <td className="py-2.5 text-foreground font-medium" title={row.fullName}>{row.name}</td>
-                  <td className="py-2.5 text-right text-muted-foreground">{row.total.toLocaleString()}</td>
-                  <td className="py-2.5 text-right text-success">{row.hit.toLocaleString()}</td>
-                  <td className="py-2.5 text-right text-destructive">{row.miss.toLocaleString()}</td>
-                  <td className="py-2.5 text-right font-medium">{row.missRate}%</td>
-                  <td className="py-2.5 pl-4">
-                    <div className="flex items-center gap-1 h-4">
-                      <div
-                        className="h-full rounded-l bg-[hsl(160,84%,39%)]"
-                        style={{ width: `${row.total > 0 ? (row.hit / row.total) * 120 : 0}px` }}
-                      />
-                      <div
-                        className="h-full rounded-r bg-[hsl(0,72%,51%)]"
-                        style={{ width: `${row.total > 0 ? (row.miss / row.total) * 120 : 0}px` }}
-                      />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <ResponsiveContainer width="100%" height={300}>
+          <BarChart data={dimensionData} layout="vertical">
+            <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="hsl(220, 13%, 91%)" />
+            <XAxis type="number" tick={{ fontSize: 11 }} />
+            <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
+            <Tooltip content={<CustomTooltip />} />
+            <Bar dataKey="hit" stackId="a" fill="hsl(160, 84%, 39%)" name="Hit" />
+            <Bar dataKey="miss" stackId="a" fill="hsl(0, 72%, 51%)" name="Miss" radius={[0, 4, 4, 0]} />
+            <Legend />
+          </BarChart>
+        </ResponsiveContainer>
       </div>
     </div>
   );

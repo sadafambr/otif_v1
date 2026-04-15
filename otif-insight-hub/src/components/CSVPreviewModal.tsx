@@ -41,8 +41,8 @@ export function CSVPreviewModal({ filename, records, fileSize, onClose }: CSVPre
         {/* Table */}
         <div className="flex-1 overflow-auto px-6 py-4">
           <table className="w-full text-sm">
-            <thead>
-              <tr className="border-b text-muted-foreground">
+            <thead className="sticky top-0 z-10 bg-background">
+              <tr className="border-b border-border text-muted-foreground">
                 <th className="pb-3 pr-4 text-left font-medium">#</th>
                 <th className="pb-3 pr-4 text-left font-medium">Sales Order</th>
                 <th className="pb-3 pr-4 text-left font-medium">Customer</th>

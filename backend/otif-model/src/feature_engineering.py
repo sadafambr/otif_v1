@@ -3,6 +3,10 @@ import numpy as np
 
 def add_safe_features(df_in):
     out = df_in.copy()
+    # Ensure date columns are datetime so day deltas match (RDD−SO) − (MatAvl−SO) ≡ RDD−MatAvl
+    for date_col in ("SO create date", "Requested Delivery Date", "Mat_Avl_Date_OTIF"):
+        if date_col in out.columns and not pd.api.types.is_datetime64_any_dtype(out[date_col]):
+            out[date_col] = pd.to_datetime(out[date_col], errors="coerce")
     num_cols = [
         "Ordered_Qty_in_Kgs", "Ordered_Quantity",
         "Ordered_Value_in_Currency", "Net_Value(Item Level at Document)"

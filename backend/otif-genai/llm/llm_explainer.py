@@ -1,12 +1,11 @@
+import json
 import os
 import re
 from pathlib import Path
-from typing import Any, Mapping, Optional, Sequence, Tuple
+from typing import Any, Mapping, Optional, Sequence, Tuple, cast
 
 from dotenv import load_dotenv
 from openai import OpenAI
-
-from config.column_definitions import COLUMN_DEFINITIONS
 
 
 _DOTENV_PATH = Path(__file__).resolve().parents[1] / ".env"
@@ -73,11 +72,27 @@ def _pick(data: Mapping[str, Any], keys: Sequence[str], default: Any = "") -> An
     return default
 
 
-def build_prompt(data):
+def _format_driver_line(raw_feat: Any, val: Any) -> str:
+    if not raw_feat:
+        return "None"
+    mapping: dict[str, str] = cast(dict[str, str], {})
+    key_lower = str(raw_feat).strip().lower()
+    if key_lower in FEATURE_NAME_MAP:
+        mapping = cast(dict[str, str], FEATURE_NAME_MAP[key_lower])
+    else:
+        for k, v in FEATURE_NAME_MAP.items():
+            k_lower = k.lower()
+            if k_lower == key_lower or k_lower == f"f_{key_lower}" or f"f_{k_lower}" == key_lower:
+                mapping = cast(dict[str, str], v)
+                break
+    biz = mapping.get("business_name") or str(raw_feat).replace("f_", "").replace("_", " ").title()
+    tech = mapping.get("technical_name") or str(raw_feat)
+    return f"{biz} (Technical metric: {tech}) = {val}"
 
+
+def _order_context_blocks(data: Mapping[str, Any]) -> dict[str, str]:
     predicted_label = int(data.get("predicted_label", 0))
     prediction = "HIT" if predicted_label == 1 else "MISS"
-
     customer = _pick(data, ["Customer Name", "Customer", "Customer_Name", "Ship-To Name", "Ship To Name"])
     plant = _pick(data, ["Plant", "Plant Name"])
     material = _pick(data, ["Material description", "Material Description", "Material", "Material ID", "Material Code"])
@@ -101,92 +116,165 @@ def build_prompt(data):
             "MAT_AVL_DATE_OTIF",
         ],
     )
-
     prob_hit = _pick(data, ["prob_hit", "hit_probability", "Hit Probability"], default="")
     prob_miss = _pick(data, ["prob_miss", "risk_score", "Miss Probability"], default="")
+    top1 = _format_driver_line(data.get("raw_top1_feature", data.get("top1_feature")), data.get("top1_value"))
+    top2 = _format_driver_line(data.get("raw_top2_feature", data.get("top2_feature")), data.get("top2_value"))
+    top3 = _format_driver_line(data.get("raw_top3_feature", data.get("top3_feature")), data.get("top3_value"))
+    return {
+        "prediction": prediction,
+        "customer": str(customer or ""),
+        "plant": str(plant or ""),
+        "material": str(material or ""),
+        "country": str(country or ""),
+        "requested_delivery_date": str(requested_delivery_date or ""),
+        "material_availability_date": str(material_availability_date or ""),
+        "prob_hit": str(prob_hit),
+        "prob_miss": str(prob_miss),
+        "top1": top1,
+        "top2": top2,
+        "top3": top3,
+    }
 
-    def fmt_driver(raw_feat, val):
-        if not raw_feat:
-            return "None"
-            
-        mapping = {}
-        key_lower = raw_feat.strip().lower()
-        if key_lower in FEATURE_NAME_MAP:
-            mapping = FEATURE_NAME_MAP[key_lower]
-        else:
-            for k, v in FEATURE_NAME_MAP.items():
-                k_lower = k.lower()
-                if k_lower == key_lower or k_lower == f"f_{key_lower}" or f"f_{k_lower}" == key_lower:
-                    mapping = v
-                    break
 
-        biz = mapping.get("business_name") or raw_feat.replace("f_", "").replace("_", " ").title()
-        tech = mapping.get("technical_name") or raw_feat
-        return f"{biz} (Technical metric: {tech}) = {val}"
+def build_json_user_prompt(data: Mapping[str, Any]) -> str:
+    c = _order_context_blocks(data)
+    return f"""You are an expert in supply chain planning.
 
-    top1 = fmt_driver(data.get("raw_top1_feature", data.get("top1_feature")), data.get("top1_value"))
-    top2 = fmt_driver(data.get("raw_top2_feature", data.get("top2_feature")), data.get("top2_value"))
-    top3 = fmt_driver(data.get("raw_top3_feature", data.get("top3_feature")), data.get("top3_value"))
+Context: Predictions use sales-order data only. Describe risk SIGNALS and patterns — do not assert exact root causes.
 
-    prompt = f"""
-You are a senior supply chain OTIF expert.
+Order:
+- Customer: {c["customer"]}
+- Plant: {c["plant"]}
+- Material: {c["material"]}
+- Country: {c["country"]}
+- Requested delivery: {c["requested_delivery_date"]}
+- Material availability (if known): {c["material_availability_date"]}
+- Hit %: {c["prob_hit"]}, Miss %: {c["prob_miss"]}
+- Model label: OTIF {c["prediction"]}
 
-Analyse one order and explain in exactly 3-4 sentences why it is predicted as OTIF {prediction}.
-Be concise and direct. Focus only on the top drivers below. Use plain business language — no bullet points, no headers.
+Top model drivers (translate to plain language in your JSON strings, not jargon):
+1) {c["top1"]}
+2) {c["top2"]}
+3) {c["top3"]}
 
-=====================
-ORDER INFORMATION
-=====================
+TASK: Output ONE JSON object only (no markdown, no prose outside JSON) with exactly these keys:
+- "risk_level": must be "High", "Medium", or "Low" (align with OTIF {c["prediction"]} and probabilities)
+- "risk_emoji": must be "", or "🔴", or "🟡", or "🟢" (suggest 🔴 for High, 🟡 Medium, 🟢 Low)
+- "key_risk_signals": array of 1 to 3 short strings (each one risk signal, not a paragraph)
+- "recommended_actions": array of 1 to 2 generic supply-chain planning actions
 
-Customer: {customer}
-Plant: {plant}
-Material: {material}
-Country: {country}
-
-Requested Delivery Date: {requested_delivery_date}
-Material Availability Date: {material_availability_date}
-
-Hit Probability: {prob_hit}
-Miss Probability: {prob_miss}
-
-Prediction: {prediction}
-
-=====================
-TOP DRIVERS
-=====================
-
-Primary Driver:
-{top1}
-
-Secondary Driver:
-{top2}
-
-Third Driver:
-{top3}
-
-=====================
-FEATURE DEFINITIONS
-=====================
-
-{COLUMN_DEFINITIONS}
-
-=====================
-INSTRUCTIONS
-=====================
-
-Write exactly 3-4 sentences maximum. Cover the root cause and the most critical risk driver. Do not repeat the feature names verbatim — translate them into plain supply chain language.
-
-End your response with exactly one final line in this format (max 25 words):
-SHAP_ONE_LINE: <one-line explanation of the key SHAP drivers>
-
+Example shape (content must reflect THIS order):
+{{"risk_level":"High","risk_emoji":"🔴","key_risk_signals":["Material timeline looks tight vs requested date","Plant historical miss pattern is elevated"],"recommended_actions":["Confirm material readiness with supply","Align plant capacity for the requested window"]}}
 """
 
-    return prompt
+
+def _parse_json_object(raw: str) -> Optional[dict[str, Any]]:
+    text = (raw or "").strip()
+    if not text:
+        return None
+    if text.startswith("```"):
+        text = re.sub(r"^```(?:json)?\s*", "", text, flags=re.IGNORECASE)
+        text = re.sub(r"\s*```\s*$", "", text)
+    try:
+        obj = json.loads(text)
+        return obj if isinstance(obj, dict) else None
+    except json.JSONDecodeError:
+        return None
 
 
-def generate_explanation(data):
+def _split_runon_signal_strings(signals: list[str]) -> list[str]:
+    """If the model returns one paragraph as a single 'signal', split into up to 3 short lines."""
+    if len(signals) != 1:
+        return signals
+    text = signals[0].strip()
+    if len(text) < 120 or text.count(". ") < 1:
+        return signals
+    parts = re.split(r"(?<=[.!?])\s+", text)
+    split = [p.strip() for p in parts if p.strip()]
+    return split[:3] if len(split) >= 2 else signals
 
-    prompt = build_prompt(data)
+
+def _format_bullets_from_json(obj: dict[str, Any]) -> str:
+    risk = str(obj.get("risk_level") or "Medium").strip()
+    if risk not in ("High", "Medium", "Low"):
+        risk = "Medium"
+    emoji = str(obj.get("risk_emoji") or "").strip()
+    if emoji not in ("", "🔴", "🟡", "🟢"):
+        emoji = ""
+    risk_line = f"Risk: {emoji} {risk}".replace("  ", " ").strip() if emoji else f"Risk: {risk}"
+
+    signals_raw = obj.get("key_risk_signals")
+    actions_raw = obj.get("recommended_actions")
+    signals: list[str] = []
+    if isinstance(signals_raw, list):
+        for s in signals_raw:
+            t = str(s).strip()
+            if t:
+                signals.append(t)
+    signals = _split_runon_signal_strings(signals)
+    signals = signals[:3]
+    actions: list[str] = []
+    if isinstance(actions_raw, list):
+        for a in actions_raw:
+            t = str(a).strip()
+            if t:
+                actions.append(t)
+    actions = actions[:2]
+
+    lines: list[str] = [risk_line, "", "Key risk signals:"]
+    if signals:
+        for s in signals:
+            lines.append(f"- {s}")
+    else:
+        lines.append("- Model points to timing or historical-pattern risk for this order.")
+    lines.extend(["", "Recommended actions:"])
+    if actions:
+        for a in actions:
+            lines.append(f"- {a}")
+    else:
+        lines.append("- Review material and delivery dates with planning.")
+        lines.append("- Confirm plant capacity for the requested window.")
+    return "\n".join(lines).strip()
+
+
+def _fallback_bullets_from_data(data: Mapping[str, Any]) -> str:
+    predicted_label = int(data.get("predicted_label", 0))
+    miss = predicted_label == 0
+    risk_line = "Risk: 🔴 High" if miss else "Risk: 🟢 Low"
+    signals: list[str] = []
+    for i in (1, 2, 3):
+        feat = data.get(f"top{i}_feature")
+        val = data.get(f"top{i}_value")
+        if feat not in (None, ""):
+            line = _format_driver_line(feat, val)
+            if line != "None":
+                base = line.split("(Technical metric:")[0].strip()
+                if val not in (None, ""):
+                    signals.append(f"{base} (value: {val})")
+                else:
+                    signals.append(base)
+    if not signals:
+        signals = [
+            "Elevated predicted miss probability on this order line.",
+        ]
+    signals = signals[:3]
+    lines = [risk_line, "", "Key risk signals:"]
+    for s in signals:
+        lines.append(f"- {s}")
+    lines.extend(
+        [
+            "",
+            "Recommended actions:",
+            "- Confirm material readiness and the requested delivery date.",
+            "- Validate plant capacity against the order timeline.",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def generate_explanation(data: dict[str, Any]) -> str:
+    user_prompt = build_json_user_prompt(data)
 
     if not os.getenv("OPENAI_API_KEY"):
         raise RuntimeError("OPENAI_API_KEY is not set. Set it in environment or otif-genai/.env.")
@@ -194,15 +282,29 @@ def generate_explanation(data):
     response = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[
-            {"role": "system", "content": "You are an expert supply chain analyst. Your task is to explain the OTIF prediction for a single order in a concise, business-friendly paragraph. Your response must be a maximum of 100 tokens and exactly 3-4 sentences. Do not provide recommendations for UI/dashboards, just explain the risk drivers for this specific order."},
-            {"role": "user", "content": prompt}
+            {
+                "role": "system",
+                "content": (
+                    "You reply with a single JSON object only. "
+                    "No introductory text, no closing explanation, no markdown code fences."
+                ),
+            },
+            {"role": "user", "content": user_prompt},
         ],
+        response_format={"type": "json_object"},
         temperature=0.2,
-        max_tokens=100,
-        timeout=15.0  # Prevent "stuck" loading states
+        max_tokens=600,
+        timeout=45.0,
     )
 
-    return response.choices[0].message.content
+    raw = response.choices[0].message.content or ""
+    parsed = _parse_json_object(raw)
+    if parsed:
+        try:
+            return _format_bullets_from_json(parsed)
+        except Exception:
+            pass
+    return _fallback_bullets_from_data(data)
 
 
 def summarize_reason(
@@ -235,26 +337,14 @@ def summarize_reason(
 
     full_text = generate_explanation(data) or ""
 
-    lines = full_text.splitlines()
-    shap_one_liner = ""
-    for i in range(len(lines) - 1, -1, -1):
-        ln = (lines[i] or "").strip()
-        if not ln:
+    lines = [ln.rstrip() for ln in full_text.splitlines()]
+    # Strip legacy one-line suffix if the model still emits it
+    cleaned: list[str] = []
+    for ln in lines:
+        if re.match(r"(?i)^\s*shap_one_line\s*:", (ln or "").strip()):
             continue
-        m = re.match(r"(?i)^\s*shap_one_line\s*:\s*(.+)\s*$", ln)
-        if m:
-            shap_one_liner = m.group(1).strip()
-            del lines[i]
-            break
+        cleaned.append(ln)
 
-    if not shap_one_liner:
-        driver_bits = []
-        for feat, _, shap_val in (list(drivers)[:3] if drivers else []):
-            if shap_val in (None, ""):
-                driver_bits.append(str(feat))
-            else:
-                driver_bits.append(f"{feat} ({shap_val:+.3f})")
-        shap_one_liner = "Key drivers: " + ", ".join(driver_bits) if driver_bits else "Key drivers: (not available)"
-
-    summary_text = "\n".join(lines).strip()
-    return summary_text, shap_one_liner.strip()
+    summary_text = "\n".join(cleaned).strip()
+    # API consumers no longer expose SHAP insight; keep second value empty for compatibility
+    return summary_text, ""
