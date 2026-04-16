@@ -112,43 +112,13 @@ function getColumnDisplayName(key: string): string {
   return COMPUTED_DISPLAY_NAMES[key] ?? getDisplayName(key);
 }
 
-/** Raw CSV columns that represent OTIF hit/miss for badge styling */
-function isStatusColumnKey(key: string): boolean {
-  const k = key.trim().replace(/\s+/g, "_").toLowerCase();
-  return (
-    k === "status" ||
-    k === "otif_hit/miss" ||
-    k === "otif_hit" ||
-    k === "otif_miss" ||
-    k === "prediction" ||
-    k === "predicted_hit" ||
-    k === "predicted_miss" ||
-    k === "y_pred" ||
-    k === "prediction_label" ||
-    k === "label" ||
-    k === "otif_prediction" ||
-    k === "predicted_class"
-  );
-}
-
-function coerceDisplayHitMiss(val: string | number): "Hit" | "Miss" | null {
-  if (val === null || val === undefined) return null;
-  if (typeof val === "number" && Number.isFinite(val)) {
-    if (val === 0) return "Miss";
-    if (val === 1) return "Hit";
-    return null;
-  }
-  const s = String(val).trim().toLowerCase();
-  if (!s) return null;
-  if (s === "0" || s === "false" || s === "no" || s === "n" || s === "miss") return "Miss";
-  if (s === "1" || s === "true" || s === "yes" || s === "y" || s === "hit") return "Hit";
-  if (s.includes("miss") || s.includes("late")) return "Miss";
-  if (s.includes("hit") || s.includes("on-time") || s.includes("on time") || s.includes("ontime")) return "Hit";
-  return null;
-}
-
 function getCellValue(order: OTIFRecord, columnKey: string): string | number {
-  if (columnKey === "leadTime") return order.leadTime;
+  if (columnKey === "leadTime") {
+    // Negative lead times are not meaningful in the UI — clamp to 0 days.
+    const leadTimeDays = parseInt(order.leadTime, 10);
+    if (isNaN(leadTimeDays)) return order.leadTime;
+    return Math.max(0, leadTimeDays);
+  }
   if (columnKey === "riskScore") return order.riskScore;
   if (columnKey === "status") return order.status;
   if (columnKey === "riskSignals") {
@@ -848,8 +818,9 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
         </p>
       </div>
 
-      <div className="px-6 h-[500px] relative overflow-x-auto overflow-y-auto">
-        <table className="min-w-max w-full text-sm text-left border-collapse">
+      <div className="px-6 h-[500px] relative overflow-hidden">
+        <div className="absolute inset-0 overflow-x-auto overflow-y-auto">
+        <table className="min-w-max w-full text-sm text-left">
           <thead>
             <tr>
               {visibleColumnKeys.map((key) => {
@@ -872,7 +843,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                       if (fromKey) reorderColumns(fromKey, key);
                       draggingKeyRef.current = null;
                     }}
-                    className="group/header relative sticky top-0 z-10 border-y border-border bg-muted py-1.5 pl-2 pr-3 text-left align-middle select-none dark:bg-muted"
+                    className="group/header relative sticky top-0 z-10 border-y border-border/60 bg-muted/40 py-1.5 pl-2 pr-3 text-left align-middle dark:bg-muted/30 select-none"
                     style={width ? { width: `${width}px`, minWidth: `${width}px`, maxWidth: `${width}px` } : undefined}
                     title={`${label} — Drag to reorder; drag right edge to resize.`}
                   >
@@ -941,8 +912,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
               >
                 {visibleColumnKeys.map((key) => {
                   const val = key === "riskSignals" ? getRiskSignals(o) : getCellValue(o, key);
-                  const statusBadge =
-                    key === "status" ? o.status : isStatusColumnKey(key) ? coerceDisplayHitMiss(val as string | number) : null;
+                  const isStatus = key === "status" || key === "otif_hit/miss" || key === "otif_hit";
                   const isSalesOrder = key === "sales order" || key === "sales_order";
                   const isRiskScore = key === "riskScore";
                   const width = columnWidths[key];
@@ -956,9 +926,9 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                       }`}
                       style={width ? { width: `${width}px`, minWidth: `${width}px`, maxWidth: `${width}px` } : undefined}
                     >
-                      {statusBadge ? (
-                        <span className={`${statusBadge === "Hit" ? "status-hit" : "status-miss"} inline-flex items-center justify-center whitespace-nowrap`}>
-                          OTIF {statusBadge}
+                      {isStatus && typeof val === "string" && (val === "Hit" || val === "Miss") ? (
+                        <span className={`${val === "Hit" ? "status-hit" : "status-miss"} inline-flex items-center justify-center whitespace-nowrap`}>
+                          OTIF {val}
                         </span>
                       ) : isRiskScore && typeof val === "number" ? (
                         `${val}%`
@@ -971,8 +941,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
               </tr>
             ))}
           </tbody>
-        </table>
-      </div>
+        </table>        </div>      </div>
 
       {totalPages > 1 && (
         <div className="flex items-center justify-between border-t px-6 py-3">

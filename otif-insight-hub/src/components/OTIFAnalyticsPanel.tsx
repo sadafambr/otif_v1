@@ -1,8 +1,8 @@
 import { useMemo, useState } from "react";
 import {
   Package, TrendingUp, TrendingDown, BarChart3,
-  PieChart as PieChartIcon, Activity, Building2,
-  Factory, Boxes,
+  PieChart as PieChartIcon, Activity, Globe, Building2,
+  Factory, Boxes, AlertTriangle, ChevronDown,
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell,
@@ -10,10 +10,26 @@ import {
 } from "recharts";
 import type { OTIFRecord } from "@/types/otif";
 
+const PIE_COLORS = [
+  "hsl(220, 70%, 55%)", "hsl(0, 72%, 51%)", "hsl(32, 95%, 55%)",
+  "hsl(160, 84%, 39%)", "hsl(280, 60%, 55%)", "hsl(180, 60%, 45%)",
+  "hsl(340, 65%, 50%)", "hsl(100, 55%, 45%)", "hsl(50, 80%, 50%)",
+  "hsl(200, 65%, 50%)",
+];
+
+const HISTOGRAM_COLORS = [
+  "hsl(220, 70%, 55%)", "hsl(32, 95%, 55%)", "hsl(160, 84%, 39%)",
+  "hsl(280, 60%, 55%)", "hsl(0, 72%, 51%)",
+];
+
+function getColor(palette: string[], i: number): string {
+  return palette[i % palette.length];
+}
+
 interface DimensionDef {
   id: string;
   label: string;
-  icon: typeof Package;
+  icon: typeof Globe;
   accessor: (o: OTIFRecord) => string;
 }
 
@@ -21,28 +37,32 @@ const MISS_DIMENSIONS: DimensionDef[] = [
   { id: "businessUnit", label: "Business Unit", icon: Building2, accessor: (o) => (o.rawData?.["division of business name"] ?? "").trim() || "(blank)" },
   { id: "plant", label: "Plant", icon: Factory, accessor: (o) => o.plant || "(blank)" },
   { id: "material", label: "Material", icon: Boxes, accessor: (o) => o.material || "(blank)" },
+  { id: "region", label: "Customer", icon: Globe, accessor: (o) => (o.rawData?.["state - province"] ?? o.rawData?.["country"] ?? "").trim() || "(blank)" },
   { id: "customer", label: "Customer", icon: Package, accessor: (o) => o.customer || "(blank)" },
 ];
 
-const CUSTOMER_DIMENSION = MISS_DIMENSIONS.find((d) => d.id === "customer")!;
-
-/** Miss overview row: Customer last for emphasis. */
-const TOP_MISS_OVERVIEW_DIMENSIONS: DimensionDef[] = [
-  ...MISS_DIMENSIONS.filter((d) => d.id !== "customer"),
-  CUSTOMER_DIMENSION,
-];
-
-function buildMissRanking(orders: OTIFRecord[], accessor: (o: OTIFRecord) => string, topN = 3) {
-  const countMap = new Map<string, number>();
+function buildMissRanking(
+  orders: OTIFRecord[],
+  accessor: (o: OTIFRecord) => string,
+  displayNameAccessor?: (o: OTIFRecord) => string,
+  topN = 3
+) {
+  const countMap = new Map<string, { count: number; displayName: string }>();
   for (const o of orders) {
     if (o.status !== "Miss") continue;
     const val = accessor(o);
-    countMap.set(val, (countMap.get(val) || 0) + 1);
+    const displayName = displayNameAccessor ? displayNameAccessor(o) : val;
+    const entry = countMap.get(val);
+    if (entry) {
+      entry.count++;
+    } else {
+      countMap.set(val, { count: 1, displayName });
+    }
   }
   return Array.from(countMap.entries())
-    .sort((a, b) => b[1] - a[1])
+    .sort((a, b) => b[1].count - a[1].count)
     .slice(0, topN)
-    .map(([name, count]) => ({ name, count }));
+    .map(([name, data]) => ({ name, displayName: data.displayName, count: data.count }));
 }
 
 function buildDimensionStats(orders: OTIFRecord[], accessor: (o: OTIFRecord) => string) {
@@ -83,7 +103,7 @@ function buildDistribution(orders: OTIFRecord[], accessor: (o: OTIFRecord) => st
       ...stats,
       missRate: stats.total > 0 ? Math.round((stats.miss / stats.total) * 1000) / 10 : 0,
     }))
-    .sort((a, b) => b.total - a.total)
+    .sort((a, b) => b.missRate - a.missRate)
     .slice(0, topN);
 }
 
@@ -115,6 +135,8 @@ function buildLeadTimeBuckets(orders: OTIFRecord[]) {
   }));
 }
 
+const HIGH_RISK_THRESHOLD = 75;
+
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (!active || !payload?.length) return null;
   return (
@@ -134,7 +156,7 @@ interface OTIFAnalyticsPanelProps {
 }
 
 export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
-  const [selectedDimension, setSelectedDimension] = useState("customer");
+  const [selectedDimension, setSelectedDimension] = useState("plant");
 
   const overallStats = useMemo(() => {
     const total = orders.length;
@@ -142,11 +164,14 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
     const hit = total - miss;
     const avgLeadTime =
       orders.reduce((s, r) => s + (parseInt(r.leadTime, 10) || 0), 0) / (total || 1);
+    const avgRiskScore =
+      orders.reduce((s, r) => s + (r.riskScore || 0), 0) / (total || 1);
     return {
       total, miss, hit,
       missRate: total > 0 ? Math.round((miss / total) * 1000) / 10 : 0,
       hitRate: total > 0 ? Math.round((hit / total) * 1000) / 10 : 0,
       avgLeadTime: Math.round(avgLeadTime * 10) / 10,
+      avgRiskScore: Math.round(avgRiskScore * 10) / 10,
     };
   }, [orders]);
 
@@ -159,37 +184,68 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
   );
 
   const topMissRankings = useMemo(() => {
-    const result: Record<string, { name: string; count: number }[]> = {};
+    const result: Record<string, { name: string; displayName: string; count: number }[]> = {};
     for (const dim of MISS_DIMENSIONS) {
-      result[dim.id] = buildMissRanking(orders, dim.accessor);
+      let displayNameAccessor: ((o: OTIFRecord) => string) | undefined;
+      
+      // For material and plant, try to get more descriptive names from rawData
+      if (dim.id === "material") {
+        displayNameAccessor = (o) => {
+          const materialCode = o.material || "(blank)";
+          const materialDesc = o.rawData?.["material description"] || o.rawData?.["material"] || "";
+          return materialDesc ? `${materialCode} - ${materialDesc}` : materialCode;
+        };
+      } else if (dim.id === "plant") {
+        displayNameAccessor = (o) => {
+          const plantCode = o.plant || "(blank)";
+          const plantDesc = o.rawData?.["plant description"] || o.rawData?.["plant name"] || "";
+          return plantDesc ? `${plantCode} - ${plantDesc}` : plantCode;
+        };
+      }
+      
+      result[dim.id] = buildMissRanking(orders, dim.accessor, displayNameAccessor);
     }
     return result;
   }, [orders]);
 
-  const detailedBreakdown = useMemo(
-    () => buildDimensionStats(orders, CUSTOMER_DIMENSION.accessor).sort((a, b) => b.miss - a.miss),
+  const highRiskMissOrders = useMemo(
+    () => orders.filter((r) => r.status === "Miss" && r.riskScore >= HIGH_RISK_THRESHOLD),
     [orders]
   );
 
   const analyticsDimConfig = MISS_DIMENSIONS.find((d) => d.id === selectedDimension)!;
-  const dimensionData = useMemo(() => {
-    const data = buildDistribution(orders, analyticsDimConfig.accessor);
-    if (selectedDimension === "customer") {
-      return [...data].sort((a, b) => b.miss - a.miss);
-    }
-    return data;
-  }, [orders, analyticsDimConfig, selectedDimension]);
+  const dimensionData = useMemo(
+    () => buildDistribution(orders, analyticsDimConfig.accessor),
+    [orders, analyticsDimConfig]
+  );
 
   const leadTimeBuckets = useMemo(() => buildLeadTimeBuckets(orders), [orders]);
+
+  const riskScoreBuckets = useMemo(() => {
+    const buckets = [
+      { name: "0-20%", min: 0, max: 20, count: 0 },
+      { name: "21-40%", min: 21, max: 40, count: 0 },
+      { name: "41-60%", min: 41, max: 60, count: 0 },
+      { name: "61-80%", min: 61, max: 80, count: 0 },
+      { name: "81-100%", min: 81, max: 100, count: 0 },
+    ];
+    for (const o of orders) {
+      const score = o.riskScore;
+      const bucket = buckets.find((b) => score >= b.min && score <= b.max);
+      if (bucket) bucket.count++;
+    }
+    return buckets;
+  }, [orders]);
 
   return (
     <div className="space-y-6">
       {/* Summary KPI cards */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-6">
         <StatCard label="Total Orders" value={overallStats.total.toLocaleString()} icon={Package} />
         <StatCard label="Hit Rate" value={`${overallStats.hitRate}%`} icon={TrendingUp} accent="text-success" />
         <StatCard label="Miss Rate" value={`${overallStats.missRate}%`} icon={TrendingDown} accent="text-destructive" />
         <StatCard label="Avg Lead Time" value={`${overallStats.avgLeadTime} days`} icon={Activity} />
+        <StatCard label="Avg Risk Score" value={`${overallStats.avgRiskScore}%`} icon={BarChart3} />
         <StatCard label="Total Miss" value={overallStats.miss.toLocaleString()} icon={TrendingDown} accent="text-destructive" />
       </div>
 
@@ -197,7 +253,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
       <div>
         <h2 className="text-lg font-semibold text-foreground mb-4">OTIF Miss Overview</h2>
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          {TOP_MISS_OVERVIEW_DIMENSIONS.map((dim) => {
+          {MISS_DIMENSIONS.slice(0, 4).map((dim) => {
             const Icon = dim.icon;
             const ranking = topMissRankings[dim.id] || [];
             return (
@@ -214,7 +270,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
                     <div key={item.name} className="flex items-center justify-between">
                       <span className="text-sm text-foreground">
                         <span className="text-muted-foreground mr-1.5">{i + 1}.</span>
-                        <span className={i === 0 ? "font-semibold" : ""}>{item.name.length > 22 ? item.name.slice(0, 19) + "..." : item.name}</span>
+                        <span className={i === 0 ? "font-semibold" : ""}>{item.displayName.length > 22 ? item.displayName.slice(0, 19) + "..." : item.displayName}</span>
                       </span>
                       <span className="text-sm font-semibold text-destructive">{item.count}</span>
                     </div>
@@ -223,40 +279,6 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
               </div>
             );
           })}
-        </div>
-      </div>
-
-      {/* Detailed Breakdown by Customer */}
-      <div className="analytics-glass-card p-5">
-        <div className="mb-4">
-          <h3 className="text-base font-semibold text-foreground">Miss rate by customer</h3>
-          <p className="text-xs text-muted-foreground">Sorted by total predicted misses (highest first)</p>
-        </div>
-        <div className="overflow-x-auto max-h-[320px] overflow-y-auto">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 z-10 border-b border-border bg-muted">
-              <tr className="border-b">
-                <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">{CUSTOMER_DIMENSION.label}</th>
-                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Total</th>
-                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Miss</th>
-                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Miss Rate</th>
-              </tr>
-            </thead>
-            <tbody>
-              {detailedBreakdown.map((row) => (
-                <tr key={row.fullName} className="border-b border-border/50 hover:bg-muted/30">
-                  <td className="py-2.5 text-foreground font-medium" title={row.fullName}>{row.name}</td>
-                  <td className="py-2.5 text-right text-muted-foreground">{row.total.toLocaleString()}</td>
-                  <td className="py-2.5 text-right text-destructive font-semibold">{row.miss.toLocaleString()}</td>
-                  <td className={`py-2.5 text-right font-semibold ${
-                    row.missRate >= 50 ? "text-destructive" : row.missRate >= 30 ? "text-amber-600" : "text-success"
-                  }`}>
-                    {row.missRate}%
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
         </div>
       </div>
 
@@ -322,7 +344,7 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
               <button
                 key={dim.id}
                 onClick={() => setSelectedDimension(dim.id)}
-                className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors ${
+                className={`rounded-full px-2.5 py-1 text-[11px] font-medium transition-colors whitespace-nowrap ${
                   selectedDimension === dim.id
                     ? "bg-primary text-primary-foreground"
                     : "bg-muted text-muted-foreground hover:bg-muted/80"
@@ -344,6 +366,53 @@ export function OTIFAnalyticsPanel({ orders }: OTIFAnalyticsPanelProps) {
             <Legend />
           </BarChart>
         </ResponsiveContainer>
+      </div>
+
+      {/* Miss Rate by dimension table */}
+      <div className="analytics-glass-card p-5">
+        <div className="mb-4 flex items-center gap-2">
+          <TrendingDown className="h-4 w-4 text-muted-foreground" />
+          <h3 className="text-sm font-semibold text-foreground">
+            Miss Rate by {analyticsDimConfig.label} (Top 10)
+          </h3>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b">
+                <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">{analyticsDimConfig.label}</th>
+                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Total</th>
+                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Hit</th>
+                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Miss</th>
+                <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Miss Rate</th>
+                <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground pl-4">Distribution</th>
+              </tr>
+            </thead>
+            <tbody>
+              {dimensionData.map((row) => (
+                <tr key={row.name} className="border-b border-border/50 hover:bg-muted/30">
+                  <td className="py-2.5 text-foreground font-medium" title={row.fullName}>{row.name}</td>
+                  <td className="py-2.5 text-right text-muted-foreground">{row.total.toLocaleString()}</td>
+                  <td className="py-2.5 text-right text-success">{row.hit.toLocaleString()}</td>
+                  <td className="py-2.5 text-right text-destructive">{row.miss.toLocaleString()}</td>
+                  <td className="py-2.5 text-right font-medium">{row.missRate}%</td>
+                  <td className="py-2.5 pl-4">
+                    <div className="flex items-center gap-1 h-4">
+                      <div
+                        className="h-full rounded-l bg-[hsl(160,84%,39%)]"
+                        style={{ width: `${row.total > 0 ? (row.hit / row.total) * 120 : 0}px` }}
+                      />
+                      <div
+                        className="h-full rounded-r bg-[hsl(0,72%,51%)]"
+                        style={{ width: `${row.total > 0 ? (row.miss / row.total) * 120 : 0}px` }}
+                      />
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

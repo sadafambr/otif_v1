@@ -412,21 +412,22 @@ def _generate_risk_drivers(req: OrderSummaryRequest, prob_miss: float) -> List[R
             abs_shap = abs(shap_val) if shap_val is not None else 0.0
             human_name = _translate_feature_name(feat)
             is_flag = abs_shap >= max_abs_shap * 0.8  # flag top-impact features
+            
+            # Calculate percentage impact (relative to max)
+            shap_percentage = round((abs_shap / max_abs_shap) * 100) if max_abs_shap > 0 else 0
 
             drivers.append(
                 RiskDriver(
                     rank=rank,
                     name=human_name,
                     value=str(val) if val is not None else "N/A",
-                    description=f"Key model input: {feat}",
+                    description=f"SHAP feature: {feat}",
                     shapValue=round(abs_shap, 4),
                     maxShap=round(max_abs_shap, 4),
                     explanation=(
-                        f"{human_name} is associated with "
-                        f"{'higher' if (shap_val or 0) > 0 else 'lower'} predicted miss risk in this order."
-                    )
-                    if shap_val is not None
-                    else f"{human_name} contributes to the prediction for this order.",
+                        f"{human_name} has a {shap_percentage}% impact on miss risk, "
+                        f"{'increasing' if (shap_val or 0) > 0 else 'decreasing'} probability."
+                    ) if shap_val is not None else f"{human_name} is a key prediction driver.",
                     flag=is_flag,
                 )
             )
@@ -500,15 +501,16 @@ def summarize_order(req: OrderSummaryRequest) -> OrderSummaryResponse:
 
     # --- GenAI explanation (with daily cache) ---
     genai_summary: Optional[str] = None
+    shap_one_liner: Optional[str] = None
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
-    # Version suffix invalidates cached paragraph-style summaries after GenAI format change
-    cache_key = f"{req.salesOrder}#genai_json_bullets_v2"
+    cache_key = req.salesOrder
 
     # Check cache: reuse if generated today
     if cache_key in _summary_cache:
-        cached_date, cached_summary, _cached_shap = _summary_cache[cache_key]
+        cached_date, cached_summary, cached_shap = _summary_cache[cache_key]
         if cached_date == today_str:
             genai_summary = cached_summary
+            shap_one_liner = cached_shap
 
     # If not cached, call GenAI
     if genai_summary is None and _genai_summarize_reason is not None:
@@ -539,18 +541,18 @@ def summarize_order(req: OrderSummaryRequest) -> OrderSummaryResponse:
             drv_tuples = [(d.name, d.value, d.shapValue) for d in drivers]
             pred_int = 1 if prediction == "Hit" else 0
 
-            genai_summary, _shap_discarded = _genai_summarize_reason(
+            genai_summary, shap_one_liner = _genai_summarize_reason(
                 prediction=pred_int,
                 prob_hit=prob_hit,
                 prob_miss=prob_miss,
                 drivers=drv_tuples,
                 row=row_data,
             )
-            # Store in cache (explicit insight line not exposed in API response)
-            _summary_cache[cache_key] = (today_str, genai_summary, None)
+            # Store in cache
+            _summary_cache[cache_key] = (today_str, genai_summary, shap_one_liner)
         except Exception as exc:
             genai_summary = None
-            logger.warning("GenAI order summary failed: %s", exc)
+            shap_one_liner = f"GenAI unavailable: {exc}"
 
     return OrderSummaryResponse(
         probHit=prob_hit,
@@ -559,7 +561,7 @@ def summarize_order(req: OrderSummaryRequest) -> OrderSummaryResponse:
         explanation=explanation,
         riskDrivers=drivers,
         genaiSummary=genai_summary,
-        shapOneLiner=None,
+        shapOneLiner=shap_one_liner,
     )
 
 
