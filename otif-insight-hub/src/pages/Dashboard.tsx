@@ -11,7 +11,7 @@ import { getDashboardData } from "@/lib/dataStore";
 import { cn } from "@/lib/utils";
 import { fetchFavorites, saveFavorite, deleteFavorite, type FavoriteFilter } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
-import { Package, XCircle, CheckCircle, TrendingDown, Calendar, ChevronDown, ChevronUp, Download, Star, Trash2, Save, LayoutDashboard, BarChart3, Users } from "lucide-react";
+import { Package, XCircle, CheckCircle, TrendingDown, Calendar, ChevronDown, ChevronUp, Download, Star, Trash2, Save, LayoutDashboard, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -225,19 +225,7 @@ export default function Dashboard() {
     };
   }, [orders, summary, selectedPeriod, selectedCreationPeriod]);
 
-  /** Predicted misses by customer (filtered dataset) for dashboard spotlight */
-  const topCustomersByMiss = useMemo(() => {
-    if (!filteredOrders.length) return [];
-    const countMap = new Map<string, number>();
-    for (const o of filteredOrders) {
-      if (o.status !== "Miss") continue;
-      const name = (o.customer || "").trim() || "(Unknown)";
-      countMap.set(name, (countMap.get(name) || 0) + 1);
-    }
-    return Array.from(countMap.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8);
-  }, [filteredOrders]);
+
 
   const setPeriod = useCallback((value: string) => {
     startFilterTransition(() => setSelectedPeriod(value));
@@ -569,35 +557,6 @@ export default function Dashboard() {
           <KPICard label="OTIF Miss Prediction" value={filteredSummary?.otifMiss ?? summary.otifMiss} description="Predicted to miss delivery" icon={XCircle} variant="risk" />
           <KPICard label="OTIF Hit Prediction" value={filteredSummary?.otifHit ?? summary.otifHit} description="Predicted on-time delivery" icon={CheckCircle} variant="success" />
           <KPICard label="Miss Rate Prediction" value={`${filteredSummary?.missRate ?? summary.missRate}%`} description="Orders predicted to miss" icon={TrendingDown} variant="info" />
-        </div>
-
-        <div className="mb-6 rounded-xl border border-border/60 bg-card/40 p-5 shadow-sm backdrop-blur-sm dark:border-white/[0.08]">
-          <div className="mb-1 flex items-center gap-2">
-            <Users className="h-4 w-4 text-muted-foreground" aria-hidden />
-            <h3 className="text-sm font-semibold text-foreground">Customer focus</h3>
-          </div>
-          <p className="mb-4 text-xs text-muted-foreground">
-            Customers with the most predicted OTIF misses in the current date filters (sorted by total misses)
-          </p>
-          {topCustomersByMiss.length === 0 ? (
-            <p className="text-sm text-muted-foreground">No predicted misses in this selection.</p>
-          ) : (
-            <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-              {topCustomersByMiss.map(([custName, missCount], i) => (
-                <div
-                  key={`${custName}-${i}`}
-                  className="flex items-center justify-between gap-2 rounded-lg border border-border/50 bg-background/50 px-3 py-2.5 text-sm"
-                >
-                  <span className="min-w-0 truncate font-medium text-foreground" title={custName}>
-                    {custName}
-                  </span>
-                  <span className="shrink-0 tabular-nums text-sm font-semibold text-destructive">
-                    {missCount.toLocaleString()} <span className="font-normal text-muted-foreground">miss</span>
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
         </div>
 
         {/* Chart */}
