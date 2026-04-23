@@ -24,8 +24,8 @@ export function OTIFChart({ summary }: OTIFChartProps) {
         className="flex w-full items-center justify-between px-4 py-3 hover:bg-accent/50 transition-colors"
       >
         <div>
-          <h3 className="text-lg font-semibold text-foreground">OTIF Distribution</h3>
-          <p className="text-sm text-muted-foreground">Order volume by OTIF prediction</p>
+          <h3 className="text-lg font-semibold text-foreground">OTIF Distribution Chart</h3>
+          {/* <p className="text-sm text-muted-foreground">Order volume by OTIF prediction</p> */}
         </div>
         {isExpanded ? (
           <ChevronDown className="h-4 w-4 text-muted-foreground rotate-180 transition-transform" />

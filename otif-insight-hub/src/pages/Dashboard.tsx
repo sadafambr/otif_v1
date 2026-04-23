@@ -1,11 +1,13 @@
-import { useState, useEffect, useMemo, useTransition, useRef, useCallback } from "react";
+import { useState, useEffect, useMemo, useTransition, useRef, useCallback, lazy, Suspense } from "react";
 import { createPortal } from "react-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { KPICard } from "@/components/KPICard";
 import { OTIFChart } from "@/components/OTIFChart";
 import { OrderTable } from "@/components/OrderTable";
 import { OrderDetailModal } from "@/components/OrderDetailModal";
-import { OTIFAnalyticsPanel } from "@/components/OTIFAnalyticsPanel";
+const OTIFAnalyticsPanel = lazy(() =>
+  import("@/components/OTIFAnalyticsPanel").then((m) => ({ default: m.OTIFAnalyticsPanel })),
+);
 import { useDashboard, useOrderDetail } from "@/hooks/useOTIF";
 import { getDashboardData } from "@/lib/dataStore";
 import { cn } from "@/lib/utils";
@@ -546,9 +548,15 @@ export default function Dashboard() {
             document.body,
           )}
 
-        <div key={activeTab} className="animate-fade-in">
+        <div className="animate-fade-in">
         {activeTab === "analytics" ? (
-          <OTIFAnalyticsPanel orders={filteredOrders} />
+          <Suspense
+            fallback={
+              <div className="py-20 text-center text-sm text-muted-foreground">Loading analytics…</div>
+            }
+          >
+            <OTIFAnalyticsPanel orders={filteredOrders} />
+          </Suspense>
         ) : (
         <>
         {/* KPI Cards */}

@@ -1,11 +1,10 @@
-import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { Search, Download, ArrowUpDown, ChevronDown, Columns2, ChevronUp, ArrowDown, Filter } from "lucide-react";
+import { useState, useMemo, useEffect, useRef, useCallback, useDeferredValue, startTransition } from "react";
+import { Search, Download, ArrowUpDown, ChevronDown, Columns2, ChevronUp, ArrowDown } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ColumnFilterCheckbox } from "@/components/ColumnFilterCheckbox";
 import { ColumnFilterRange } from "@/components/ColumnFilterRange";
 import { ColumnFilterDate } from "@/components/ColumnFilterDate";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuTrigger } from "@/components/ui/dropdown-menu";
 import { Checkbox } from "@/components/ui/checkbox";
 import { RotateCcw } from "lucide-react";
@@ -17,6 +16,31 @@ function isSalesOrderColumnKey(key: string, availableColumnKeys: string[]): bool
   const k = key.trim().toLowerCase();
   if (k === "sales order" || k === "sales_order" || k === "salesorder") return true;
   return resolveDefaultColumn("sales order", availableColumnKeys) === key;
+}
+
+/** Material / SKU identifiers → searchable checklist, never a numeric range. */
+function isMaterialCodeColumnKey(key: string, availableColumnKeys: string[]): boolean {
+  const k = key.trim().toLowerCase();
+  if (k === "material" || k === "material_code" || k === "material code") return true;
+  return resolveDefaultColumn("material", availableColumnKeys) === key;
+}
+
+/** Status / OTIF outcome column — toolbar uses a segmented control instead of a list popover. */
+function isStatusColumnKey(key: string, availableColumnKeys: string[]): boolean {
+  const k = key.trim().toLowerCase();
+  if (k === "status") return true;
+  return resolveDefaultColumn("status", availableColumnKeys) === key;
+}
+
+function pickStatusToken(uniqueValues: string[], kind: "hit" | "miss"): string | undefined {
+  const re = kind === "hit" ? /^hit$/i : /^miss$/i;
+  return uniqueValues.find((v) => re.test(v.trim()));
+}
+
+/** Narrative risk column — no column filter UI */
+function isRiskSignalsColumnKey(key: string): boolean {
+  const k = key.trim().toLowerCase();
+  return k === "risksignals" || k === "risk signals" || k === "risk_signals";
 }
 import { cn } from "@/lib/utils";
 import type { OTIFRecord } from "@/types/otif";
@@ -42,7 +66,7 @@ type ColumnLayoutState = {
   widths?: Record<string, number>;
 };
 
-type ColumnFilterType = "checkbox" | "range" | "date" | "leadtime";
+type ColumnFilterType = "checkbox" | "range" | "date" | "leadtime" | "none";
 
 interface ColumnFilterState {
   checkboxFilters: Record<string, Set<string>>;
@@ -186,6 +210,53 @@ const SHAP_FEATURE_LABELS: Record<string, string> = {
 
 const LEAD_TIME_THRESHOLD = 60;
 
+/** Stable empty selection — avoids allocating `new Set()` on every render */
+const EMPTY_FILTER_SELECTION = new Set<string>();
+
+/** Single pass over rows: distinct values + numeric bounds per column (shared by all filter UIs). */
+function buildColumnFacets(
+  orders: OTIFRecord[],
+  keys: string[],
+): { uniqueValues: Record<string, string[]>; rangeBounds: Record<string, { min: number; max: number }> } {
+  const uniqueSets: Record<string, Set<string>> = {};
+  const rangeAgg: Record<string, { min: number; max: number }> = {};
+  for (const k of keys) {
+    uniqueSets[k] = new Set();
+    rangeAgg[k] = { min: Infinity, max: -Infinity };
+  }
+  for (const o of orders) {
+    for (const k of keys) {
+      const v = getCellValue(o, k);
+      const s = String(v).trim();
+      if (s) uniqueSets[k].add(s);
+      const n = parseNumeric(String(v));
+      if (!isNaN(n)) {
+        if (n < rangeAgg[k].min) rangeAgg[k].min = n;
+        if (n > rangeAgg[k].max) rangeAgg[k].max = n;
+      }
+    }
+  }
+  const uniqueValues: Record<string, string[]> = {};
+  const rangeBounds: Record<string, { min: number; max: number }> = {};
+  for (const k of keys) {
+    const arr = [...uniqueSets[k]];
+    if (isSalesOrderColumnKey(k, keys)) {
+      arr.sort((a, b) => {
+        const na = Number(a.replace(/,/g, ""));
+        const nb = Number(b.replace(/,/g, ""));
+        if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
+        return a.localeCompare(b);
+      });
+    } else {
+      arr.sort();
+    }
+    uniqueValues[k] = arr;
+    const r = rangeAgg[k];
+    rangeBounds[k] = !isFinite(r.min) ? { min: 0, max: 100 } : { min: Math.floor(r.min), max: Math.ceil(r.max) };
+  }
+  return { uniqueValues, rangeBounds };
+}
+
 export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps) {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortKey | null>(null);
@@ -218,6 +289,11 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     }
     return list;
   }, [orders, rawHeaders]);
+
+  const columnFacets = useMemo(
+    () => buildColumnFacets(orders, availableColumnKeys),
+    [orders, availableColumnKeys],
+  );
 
   const defaultVisibleKeys = useMemo(() => {
     if (availableColumnKeys.length === 0) return [];
@@ -344,10 +420,11 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
 
   const getColumnFilterType = useCallback(
     (key: string): ColumnFilterType => {
+      if (isRiskSignalsColumnKey(key)) return "none";
       if (key === "leadTime") return "leadtime";
       if (key === "riskScore") return "range";
-      if (key === "status") return "checkbox";
-      if (key === "riskSignals") return "checkbox";
+      if (isMaterialCodeColumnKey(key, availableColumnKeys)) return "checkbox";
+      if (isStatusColumnKey(key, availableColumnKeys)) return "checkbox";
       if (isSalesOrderColumnKey(key, availableColumnKeys)) return "checkbox";
 
       if (columnTypeCache.current[key]) return columnTypeCache.current[key];
@@ -361,44 +438,13 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   );
 
   const getUniqueValues = useCallback(
-    (key: string): string[] => {
-      const vals = new Set<string>();
-      for (const o of orders) {
-        const v = String(getCellValue(o, key)).trim();
-        if (v) vals.add(v);
-      }
-      const arr = [...vals];
-      if (isSalesOrderColumnKey(key, availableColumnKeys)) {
-        arr.sort((a, b) => {
-          const na = Number(a.replace(/,/g, ""));
-          const nb = Number(b.replace(/,/g, ""));
-          if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb;
-          return a.localeCompare(b);
-        });
-      } else {
-        arr.sort();
-      }
-      return arr;
-    },
-    [orders, availableColumnKeys]
+    (key: string) => columnFacets.uniqueValues[key] ?? [],
+    [columnFacets],
   );
 
   const getRangeBounds = useCallback(
-    (key: string): { min: number; max: number } => {
-      let min = Infinity;
-      let max = -Infinity;
-      for (const o of orders) {
-        const raw = String(getCellValue(o, key));
-        const n = parseNumeric(raw);
-        if (!isNaN(n)) {
-          if (n < min) min = n;
-          if (n > max) max = n;
-        }
-      }
-      if (!isFinite(min)) return { min: 0, max: 100 };
-      return { min: Math.floor(min), max: Math.ceil(max) };
-    },
-    [orders]
+    (key: string) => columnFacets.rangeBounds[key] ?? { min: 0, max: 100 },
+    [columnFacets],
   );
 
   const setCheckboxFilter = useCallback((key: string, value: Set<string>) => {
@@ -469,11 +515,13 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     }
   };
 
+  const deferredSearch = useDeferredValue(search);
+
   const filtered = useMemo(() => {
     let result = [...orders];
 
-    if (search) {
-      const q = search.toLowerCase();
+    if (deferredSearch) {
+      const q = deferredSearch.toLowerCase();
       result = result.filter((o) => {
         const haystack = [o.salesOrder, o.customer, o.material, o.plant, o.reqDelivery, o.leadTime, o.status]
           .join(" ")
@@ -548,12 +596,57 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       });
     }
     return result;
-  }, [orders, search, sortBy, sortDir, checkboxFilters, rangeFilters, dateFilters, leadTimeMode]);
+  }, [orders, deferredSearch, sortBy, sortDir, checkboxFilters, rangeFilters, dateFilters, leadTimeMode]);
 
-  useMemo(() => setPage(1), [filtered.length]);
+  const filteredLengthRef = useRef<number | null>(null);
+  useEffect(() => {
+    if (filteredLengthRef.current === null) {
+      filteredLengthRef.current = filtered.length;
+      return;
+    }
+    if (filteredLengthRef.current !== filtered.length) {
+      filteredLengthRef.current = filtered.length;
+      setPage(1);
+    }
+  }, [filtered.length]);
 
   const totalPages = Math.ceil(filtered.length / pageSize);
   const pageOrders = filtered.slice((page - 1) * pageSize, page * pageSize);
+
+  const statusFilterKey = useMemo(
+    () => visibleColumnKeys.find((k) => isStatusColumnKey(k, availableColumnKeys)),
+    [visibleColumnKeys, availableColumnKeys]
+  );
+
+  const statusUniqueValues = useMemo(
+    () => (statusFilterKey ? getUniqueValues(statusFilterKey) : []),
+    [statusFilterKey, getUniqueValues]
+  );
+
+  const statusHitToken = useMemo(() => pickStatusToken(statusUniqueValues, "hit"), [statusUniqueValues]);
+  const statusMissToken = useMemo(() => pickStatusToken(statusUniqueValues, "miss"), [statusUniqueValues]);
+
+  const statusSegment: "all" | "hit" | "miss" = useMemo(() => {
+    if (!statusFilterKey) return "all";
+    const sel = checkboxFilters[statusFilterKey];
+    if (!sel || sel.size !== 1) return "all";
+    if (statusHitToken && sel.has(statusHitToken)) return "hit";
+    if (statusMissToken && sel.has(statusMissToken)) return "miss";
+    return "all";
+  }, [statusFilterKey, checkboxFilters, statusHitToken, statusMissToken]);
+
+  const setStatusSegment = (mode: "all" | "hit" | "miss") => {
+    if (!statusFilterKey) return;
+    setPage(1);
+    startTransition(() => {
+      if (mode === "all") {
+        setCheckboxFilter(statusFilterKey, new Set());
+        return;
+      }
+      const token = mode === "hit" ? statusHitToken : statusMissToken;
+      if (token) setCheckboxFilter(statusFilterKey, new Set([token]));
+    });
+  };
 
   const translateFeatureName = (name: string): string => {
     const key = name.trim().toLowerCase();
@@ -598,93 +691,6 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     URL.revokeObjectURL(url);
   };
 
-  const renderColumnFilter = (key: string) => {
-    const filterType = getColumnFilterType(key);
-    const label = getColumnDisplayName(key);
-
-    if (filterType === "leadtime") {
-      const isNonDefault = leadTimeMode !== "lt";
-      return (
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              type="button"
-              className={cn(
-                "order-table-filter-trigger",
-                isNonDefault
-                  ? "text-primary opacity-100"
-                  : "text-muted-foreground opacity-[0.38] hover:!opacity-100 hover:bg-muted/70 hover:text-foreground group-hover/header:opacity-[0.52]",
-                "data-[state=open]:bg-muted/65 data-[state=open]:opacity-100 data-[state=open]:text-foreground",
-              )}
-              title={`Filter ${label}`}
-            >
-              <Filter className="h-2 w-2" strokeWidth={2.5} />
-            </button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="column-filter-popover w-52 p-0">
-            <div className="p-2 space-y-0.5">
-              <button
-                onClick={() => setLeadTimeMode("lt")}
-                className={`w-full text-left rounded px-3 py-2 text-sm transition-colors ${leadTimeMode === "lt" ? "bg-primary text-primary-foreground font-medium" : "hover:bg-muted/50"}`}
-              >
-                &lt; {LEAD_TIME_THRESHOLD} days
-              </button>
-              <button
-                onClick={() => setLeadTimeMode("gte")}
-                className={`w-full text-left rounded px-3 py-2 text-sm transition-colors ${leadTimeMode === "gte" ? "bg-primary text-primary-foreground font-medium" : "hover:bg-muted/50"}`}
-              >
-                &ge; {LEAD_TIME_THRESHOLD} days
-              </button>
-            </div>
-          </PopoverContent>
-        </Popover>
-      );
-    }
-
-    if (filterType === "checkbox") {
-      const uniqueVals = getUniqueValues(key);
-      if (uniqueVals.length === 0) return null;
-      return (
-        <ColumnFilterCheckbox
-          label={label}
-          options={uniqueVals}
-          selected={checkboxFilters[key] ?? new Set()}
-          onChange={(val) => setCheckboxFilter(key, val)}
-        />
-      );
-    }
-
-    if (filterType === "range") {
-      const bounds = getRangeBounds(key);
-      const current = rangeFilters[key];
-      return (
-        <ColumnFilterRange
-          label={label}
-          min={bounds.min}
-          max={bounds.max}
-          currentMin={current?.min}
-          currentMax={current?.max}
-          onChange={(min, max) => setRangeFilter(key, min, max)}
-          unit={key === "riskScore" ? "%" : ""}
-        />
-      );
-    }
-
-    if (filterType === "date") {
-      const current = dateFilters[key];
-      return (
-        <ColumnFilterDate
-          label={label}
-          currentStart={current?.start}
-          currentEnd={current?.end}
-          onChange={(start, end) => setDateFilter(key, start, end)}
-        />
-      );
-    }
-
-    return null;
-  };
-
   const activeFilterCount = useMemo(() => {
     let count = 0;
     count += Object.keys(checkboxFilters).length;
@@ -696,7 +702,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
   }, [checkboxFilters, rangeFilters, dateFilters, leadTimeMode, search]);
 
   return (
-    <div className="glass-table-panel animate-fade-in">
+    <div className="glass-table-panel animate-fade-in pl-4">
       <div className="flex items-center justify-between border-b px-6 py-4">
         <div>
           <h3 className="text-lg font-semibold text-foreground">Order-Level OTIF Assessment</h3>
@@ -792,31 +798,215 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
           <Button variant="outline" size="sm" onClick={handleExport}>
             <Download className="mr-1.5 h-3.5 w-3.5" /> Export
           </Button>
-          <Button variant="ghost" size="sm" onClick={clearAllFilters} title="Clear all filters">
-            <RotateCcw className="mr-1.5 h-3.5 w-3.5" /> Clear Filters
-            {activeFilterCount > 0 && (
-              <span className="ml-1 inline-flex h-4 min-w-[16px] items-center justify-center rounded-full bg-primary px-1 text-[10px] text-primary-foreground">
-                {activeFilterCount}
-              </span>
-            )}
-          </Button>
         </div>
       </div>
 
-      <div className="px-6 py-3">
+      {/* ── Search + Filter bar ── */}
+      <div className="px-6 py-3 space-y-3">
+        {/* Search */}
         <div className="relative max-w-lg">
           <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
           <Input
-            placeholder="Search orders..."
+            placeholder="Search orders…"
             value={search}
             onChange={(e) => { setSearch(e.target.value); setPage(1); }}
             className="pl-9"
           />
         </div>
-        <p className="mt-2 text-xs text-muted-foreground">
+
+        {/* ── Dynamic column filter dock ── */}
+        <div className="flex flex-wrap items-center gap-2">
+          {statusFilterKey && (
+            <div
+              className={cn(
+                "inline-flex items-center rounded-xl p-0.5 glass-surface glass-surface-ring shadow-sm transition-[border-color,box-shadow] duration-300",
+                statusSegment === "miss" &&
+                  "border-destructive/40 shadow-[0_8px_28px_-10px_hsl(var(--destructive)/0.35)] dark:border-destructive/35",
+                statusSegment === "hit" &&
+                  "border-primary/35 shadow-[0_8px_28px_-10px_hsl(var(--primary)/0.22)] dark:border-primary/25"
+              )}
+              role="group"
+              aria-label="Filter by OTIF status"
+            >
+              {(["all", "hit", "miss"] as const).map((mode) => {
+                const label = mode === "all" ? "All" : mode === "hit" ? "Hit" : "Miss";
+                const active = statusSegment === mode;
+                const disabled =
+                  mode === "hit"
+                    ? !statusHitToken
+                    : mode === "miss"
+                      ? !statusMissToken
+                      : false;
+                const activeGreen = active && (mode === "all" || mode === "hit");
+                const activeRed = active && mode === "miss";
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setStatusSegment(mode)}
+                    className={cn(
+                      "rounded-lg px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
+                      activeGreen && "bg-primary/20 text-primary shadow-sm ring-1 ring-primary/20",
+                      activeRed && "bg-destructive/20 text-destructive shadow-sm ring-1 ring-destructive/25",
+                      !active && "text-muted-foreground hover:bg-background/50 hover:text-foreground",
+                      disabled && "pointer-events-none opacity-40"
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {visibleColumnKeys.includes("leadTime") && (
+            <div
+              className={cn(
+                "inline-flex items-center rounded-xl p-0.5 glass-surface glass-surface-ring shadow-sm transition-[border-color,box-shadow] duration-300",
+                leadTimeMode === "gte" &&
+                  "border-primary/35 shadow-[0_8px_28px_-10px_hsl(var(--primary)/0.22)] dark:border-primary/25"
+              )}
+              role="group"
+              aria-label="Filter by lead time"
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setPage(1);
+                  startTransition(() => setLeadTimeMode("lt"));
+                }}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
+                  leadTimeMode === "lt"
+                    ? "bg-background/55 text-foreground shadow-sm ring-1 ring-border/45"
+                    : "text-muted-foreground hover:bg-background/50 hover:text-foreground"
+                )}
+              >
+                &lt; {LEAD_TIME_THRESHOLD} days
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setPage(1);
+                  startTransition(() => setLeadTimeMode("gte"));
+                }}
+                className={cn(
+                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
+                  leadTimeMode === "gte"
+                    ? "bg-primary/20 text-primary shadow-sm ring-1 ring-primary/20"
+                    : "text-muted-foreground hover:bg-background/50 hover:text-foreground"
+                )}
+              >
+                ≥ {LEAD_TIME_THRESHOLD} days
+              </button>
+            </div>
+          )}
+
+          {visibleColumnKeys
+            .filter(
+              (key) =>
+                !isStatusColumnKey(key, availableColumnKeys) &&
+                !isRiskSignalsColumnKey(key) &&
+                key !== "leadTime"
+            )
+            .map((key) => {
+            const label = getColumnDisplayName(key);
+            const filterType = getColumnFilterType(key);
+            const isActive = columnHasActiveFilter(key);
+
+            const pillClass = cn(
+              "inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors",
+              isActive
+                ? "border-primary/50 bg-primary/10 text-primary"
+                : "border-border/60 bg-muted/30 text-muted-foreground hover:bg-muted/60 hover:text-foreground"
+            );
+
+            if (filterType === "none") return null;
+
+            if (filterType === "checkbox") {
+              const opts = getUniqueValues(key);
+              const selected = checkboxFilters[key] ?? EMPTY_FILTER_SELECTION;
+              return (
+                <ColumnFilterCheckbox
+                  key={key}
+                  label={label}
+                  options={opts}
+                  selected={selected}
+                  onChange={(val) => {
+                    setPage(1);
+                    startTransition(() => setCheckboxFilter(key, val));
+                  }}
+                  triggerClassName={pillClass}
+                  showLabel
+                />
+              );
+            }
+
+            if (filterType === "range") {
+              const bounds = getRangeBounds(key);
+              const unit = key === "riskScore" ? "%" : "";
+              return (
+                <ColumnFilterRange
+                  key={key}
+                  label={label}
+                  min={bounds.min}
+                  max={bounds.max}
+                  currentMin={rangeFilters[key]?.min}
+                  currentMax={rangeFilters[key]?.max}
+                  unit={unit}
+                  onChange={(mn, mx) => {
+                    setPage(1);
+                    startTransition(() => setRangeFilter(key, mn, mx));
+                  }}
+                  triggerClassName={pillClass}
+                  showLabel
+                  variant={key === "riskScore" ? "riskScore" : "default"}
+                />
+              );
+            }
+
+            if (filterType === "date") {
+              return (
+                <ColumnFilterDate
+                  key={key}
+                  label={label}
+                  currentStart={dateFilters[key]?.start}
+                  currentEnd={dateFilters[key]?.end}
+                  onChange={(s, e) => {
+                    setPage(1);
+                    startTransition(() => setDateFilter(key, s, e));
+                  }}
+                  triggerClassName={pillClass}
+                  showLabel
+                />
+              );
+            }
+
+            return null;
+          })}
+
+          {/* Clear all */}
+          {activeFilterCount > 0 && (
+            <button
+              type="button"
+              onClick={clearAllFilters}
+              className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
+            >
+              <RotateCcw className="h-3 w-3" />
+              Clear Filters
+              <span className="rounded-full bg-destructive/15 px-1.5 py-0.5 text-[10px] font-bold text-destructive">
+                {activeFilterCount}
+              </span>
+            </button>
+          )}
+        </div>
+
+        <p className="text-xs text-muted-foreground">
           Showing {pageOrders.length} of {filtered.length} orders
         </p>
       </div>
+
 
       <div className="px-6 h-[500px] relative overflow-hidden">
         <div className="absolute inset-0 overflow-x-auto overflow-y-auto">
@@ -826,7 +1016,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
               {visibleColumnKeys.map((key) => {
                 const label = getColumnDisplayName(key);
                 const width = columnWidths[key];
-                const showHeaderChrome = sortBy === key || columnHasActiveFilter(key);
+                const showHeaderChrome = sortBy === key;
                 return (
                   <th
                     key={key}
@@ -856,7 +1046,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                           "flex shrink-0 items-center justify-end gap-px transition-opacity duration-200 ease-out",
                           showHeaderChrome
                             ? "opacity-100"
-                            : "opacity-0 group-hover/header:opacity-100 focus-within:opacity-100 has-[button[data-state=open]]:opacity-100",
+                            : "opacity-0 group-hover/header:opacity-100 focus-within:opacity-100",
                         )}
                       >
                         <button
@@ -878,7 +1068,6 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                             />
                           )}
                         </button>
-                        {renderColumnFilter(key)}
                       </div>
                     </div>
                     <div
