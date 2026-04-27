@@ -954,7 +954,7 @@ export function OrderTable({
           {statusFilterKey && (
             <div
               className={cn(
-                "inline-flex items-center rounded-xl p-0.5 glass-surface glass-surface-ring shadow-sm transition-[border-color,box-shadow] duration-300",
+                "inline-flex items-center rounded-xl p-0.5 [--seg-r:calc(var(--radius)-0.125rem)] glass-surface glass-surface-ring shadow-sm transition-[border-color,box-shadow] duration-300",
                 statusSegment === "miss" &&
                   "border-destructive/40 shadow-[0_8px_28px_-10px_hsl(var(--destructive)/0.35)] dark:border-destructive/35",
                 statusSegment === "hit" &&
@@ -963,7 +963,7 @@ export function OrderTable({
               role="group"
               aria-label="Filter by OTIF status"
             >
-              {(["all", "hit", "miss"] as const).map((mode) => {
+              {(["all", "hit", "miss"] as const).map((mode, i, modes) => {
                 const label = mode === "all" ? "All" : mode === "hit" ? "Hit" : "Miss";
                 const active = statusSegment === mode;
                 const disabled =
@@ -974,6 +974,8 @@ export function OrderTable({
                       : false;
                 const activeGreen = active && (mode === "all" || mode === "hit");
                 const activeRed = active && mode === "miss";
+                const isFirst = i === 0;
+                const isLast = i === modes.length - 1;
                 return (
                   <button
                     key={mode}
@@ -981,7 +983,9 @@ export function OrderTable({
                     disabled={disabled}
                     onClick={() => setStatusSegment(mode)}
                     className={cn(
-                      "rounded-lg px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
+                      "px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
+                      isFirst ? "rounded-l-[var(--seg-r)]" : "rounded-l-md",
+                      isLast ? "rounded-r-[var(--seg-r)]" : "rounded-r-md",
                       activeGreen && "bg-primary/20 text-primary shadow-sm ring-1 ring-primary/20",
                       activeRed && "bg-destructive/20 text-destructive shadow-sm ring-1 ring-destructive/25",
                       !active && "text-muted-foreground hover:bg-background/50 hover:text-foreground",
@@ -998,7 +1002,7 @@ export function OrderTable({
           {visibleColumnKeys.includes("leadTime") && (
             <div
               className={cn(
-                "inline-flex items-center rounded-xl p-0.5 glass-surface glass-surface-ring shadow-sm transition-[border-color,box-shadow] duration-300",
+                "inline-flex items-center rounded-xl p-0.5 [--seg-r:calc(var(--radius)-0.125rem)] glass-surface glass-surface-ring shadow-sm transition-[border-color,box-shadow] duration-300",
                 leadTimeMode === "gte" &&
                   "border-primary/35 shadow-[0_8px_28px_-10px_hsl(var(--primary)/0.22)] dark:border-primary/25"
               )}
@@ -1012,7 +1016,7 @@ export function OrderTable({
                   setLeadTimeMode("lt");
                 }}
                 className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
+                  "rounded-l-[var(--seg-r)] rounded-r-md px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
                   leadTimeMode === "lt"
                     ? "bg-background/55 text-foreground shadow-sm ring-1 ring-border/45"
                     : "text-muted-foreground hover:bg-background/50 hover:text-foreground"
@@ -1027,7 +1031,7 @@ export function OrderTable({
                   setLeadTimeMode("gte");
                 }}
                 className={cn(
-                  "rounded-lg px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
+                  "rounded-l-md rounded-r-[var(--seg-r)] px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
                   leadTimeMode === "gte"
                     ? "bg-primary/20 text-primary shadow-sm ring-1 ring-primary/20"
                     : "text-muted-foreground hover:bg-background/50 hover:text-foreground"
@@ -1175,8 +1179,8 @@ export function OrderTable({
       </div>
 
 
-      <div className="px-6 h-[500px] relative overflow-hidden">
-        <div className="absolute inset-0 overflow-x-auto overflow-y-auto">
+      <div className="relative h-[500px] overflow-hidden bg-background px-6">
+        <div className="absolute inset-0 overflow-x-auto overflow-y-auto bg-background">
         <table className="min-w-max w-full text-sm text-left">
           <thead>
             <tr>
@@ -1200,7 +1204,7 @@ export function OrderTable({
                       if (fromKey) reorderColumns(fromKey, key);
                       draggingKeyRef.current = null;
                     }}
-                    className="group/header relative sticky top-0 z-10 border-y border-border/60 bg-muted py-1.5 pl-2 pr-3 text-left align-middle select-none"
+                    className="group/header relative sticky top-0 z-20 border-b border-border/60 bg-muted py-1.5 pl-2 pr-3 text-left align-middle shadow-sm select-none"
                     style={width ? { width: `${width}px`, minWidth: `${width}px`, maxWidth: `${width}px` } : undefined}
                     title={`${label} — Drag to reorder; drag right edge to resize.`}
                   >

@@ -255,9 +255,9 @@ export default function AdminModelDashboard() {
         {/* Header — glass bar */}
         <div className="glass-surface glass-surface-ring mb-8 flex flex-col gap-5 rounded-2xl p-5 shadow-sm transition-[box-shadow] duration-300 ease-smooth hover:shadow-md sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <h1 className="text-2xl font-bold tracking-tight text-foreground">OTIF Model Command Centre</h1>
+            <h1 className="text-2xl font-bold tracking-tight text-foreground">OTIF Model Specs</h1>
             <p className="mt-1 text-sm text-muted-foreground">
-              Technical health, explainability, prediction &amp; data management.
+              Know more about the model and its performance.
             </p>
           </div>
           <MonthSelector
@@ -582,7 +582,7 @@ function TabDashboard({ month, token }: { month: string | undefined; token: stri
                       <circle
                         cx="110" cy="110" r={R}
                         fill="none"
-                        stroke="hsl(0, 72%, 51%)"
+                        stroke="hsl(0, 72.00%, 51.00%)"
                         strokeWidth="32"
                         strokeDasharray={`${missLen} ${C}`}
                         strokeDashoffset={`${-hitLen}`}
@@ -701,7 +701,7 @@ function PerformanceCurves({ month, token }: { month: string | undefined; token:
             xLabel="False Positive Rate"
             yLabel="True Positive Rate"
             title="ROC Curve"
-            color="hsl(var(--primary))"
+            color="hsl(295, 70.30%, 55.10%)"
             legendLabel={`ROC (AUC = ${data.roc.auc.toFixed(2)})`}
             diagonalGuide
           />

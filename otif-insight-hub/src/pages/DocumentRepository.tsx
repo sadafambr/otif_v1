@@ -76,7 +76,7 @@ export default function DocumentRepository() {
       <div className="mx-auto max-w-5xl px-8 py-8">
         <h1 className="text-2xl font-bold text-foreground">Document Repository</h1>
         <p className="mb-8 text-sm text-muted-foreground">
-          Upload, manage, and preview your OTIF CSV data files
+          Upload, manage, and preview your data.
         </p>
 
         <FileUploadZone

@@ -2,8 +2,9 @@ import { useMemo, useState, useEffect, useCallback, memo } from "react";
 import {
   Package, TrendingUp, TrendingDown, BarChart3,
   PieChart as PieChartIcon, Activity, Globe, Building2,
-  Factory, Boxes, ChevronDown,
+  Factory, Boxes, ChevronDown, XCircle,
 } from "lucide-react";
+import { KPICard } from "@/components/KPICard";
 import {
   BarChart,
   Bar,
@@ -526,12 +527,40 @@ function OTIFAnalyticsPanelInner({ orders, onDrillToOrderTable }: OTIFAnalyticsP
 
   return (
     <div className="space-y-6">
-      {/* Summary KPI cards */}
-      <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-4">
-        <StatCard label="Total Orders" value={overallStats.total.toLocaleString()} icon={Package} />
-        <StatCard label="Hit Rate Prediction" value={`${overallStats.hitRate}%`} icon={TrendingUp} accent="text-success" />
-        <StatCard label="Miss Rate Prediction" value={`${overallStats.missRate}%`} icon={TrendingDown} accent="text-destructive" />
-        <StatCard label="Total Misses Prediction" value={overallStats.miss.toLocaleString()} icon={TrendingDown} accent="text-destructive" />
+      {/* Summary KPI cards — same component and layout as Dashboard */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+        <KPICard
+          label="Total Orders"
+          value={overallStats.total.toLocaleString()}
+          description="Orders evaluated"
+          calculation={`Count of orders in the loaded analytics dataset.\n= ${overallStats.total.toLocaleString()} rows.`}
+          icon={Package}
+          variant="default"
+        />
+        <KPICard
+          label="Hit Rate Prediction"
+          value={`${overallStats.hitRate}%`}
+          description="Share predicted on-time"
+          calculation={`(Hit count ÷ Total orders) × 100, one decimal.\n= (${overallStats.hit.toLocaleString()} ÷ ${overallStats.total.toLocaleString()}) × 100 = ${overallStats.hitRate}%.`}
+          icon={TrendingUp}
+          variant="success"
+        />
+        <KPICard
+          label="Miss Rate Prediction"
+          value={`${overallStats.missRate}%`}
+          description="Share of orders predicted to miss"
+          calculation={`(Miss count ÷ Total orders) × 100, one decimal.\n= (${overallStats.miss.toLocaleString()} ÷ ${overallStats.total.toLocaleString()}) × 100 = ${overallStats.missRate}%.`}
+          icon={TrendingDown}
+          variant="info"
+        />
+        <KPICard
+          label="Total Misses Prediction"
+          value={overallStats.miss.toLocaleString()}
+          description="Predicted to miss delivery"
+          calculation={`Orders with model prediction status "Miss".\n= ${overallStats.miss.toLocaleString()} of ${overallStats.total.toLocaleString()} orders.`}
+          icon={XCircle}
+          variant="risk"
+        />
       </div>
 
       {/* OTIF Miss Overview */}
@@ -1119,25 +1148,3 @@ function OTIFAnalyticsPanelInner({ orders, onDrillToOrderTable }: OTIFAnalyticsP
 }
 
 export const OTIFAnalyticsPanel = memo(OTIFAnalyticsPanelInner);
-
-function StatCard({
-  label,
-  value,
-  icon: Icon,
-  accent,
-}: {
-  label: string;
-  value: string;
-  icon: typeof Package;
-  accent?: string;
-}) {
-  return (
-    <div className="analytics-glass-card p-4">
-      <div className="flex items-center gap-2 mb-1">
-        <Icon className="h-3.5 w-3.5 text-muted-foreground" />
-        <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">{label}</p>
-      </div>
-      <p className={`text-xl font-bold ${accent ?? "text-foreground"}`}>{value}</p>
-    </div>
-  );
-}

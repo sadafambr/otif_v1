@@ -162,9 +162,9 @@ export default function Dashboard() {
 
   const greeting = useMemo(() => {
     const h = new Date().getHours();
-    if (h < 12) return "Good morning";
-    if (h < 17) return "Good afternoon";
-    return "Good evening";
+    if (h < 12) return "Good morning!";
+    if (h < 17) return "Good afternoon!";
+    return "Good evening!";
   }, []);
 
   /** Single pass: filter rows, cache parsed dates per order, derive summary without extra scans. */
@@ -325,7 +325,7 @@ export default function Dashboard() {
           <div>
             <p className="text-sm text-muted-foreground">{greeting}</p>
             <h1 className="text-2xl font-bold text-foreground">OTIF Risk Dashboard</h1>
-            <p className="text-sm text-muted-foreground">Supply Chain Delivery Risk Intelligence</p>
+            <p className="text-sm text-muted-foreground">Supply Chain Performance & Risk Insights</p>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-xs text-muted-foreground">
