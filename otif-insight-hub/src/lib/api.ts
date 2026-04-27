@@ -28,7 +28,13 @@ export async function login(email: string, password: string): Promise<AuthSessio
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.detail || "Login failed");
+    let detail = "LOGIN_FAILED";
+    if (typeof data.detail === "string" && data.detail) {
+      detail = data.detail;
+    } else if (Array.isArray(data.detail)) {
+      detail = data.detail.map((e: { msg?: string }) => e.msg ?? String(e)).join("; ");
+    }
+    throw new Error(detail);
   }
 
   const data = await res.json();

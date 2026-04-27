@@ -318,6 +318,19 @@
   }
 }
 
+@layer utilities {
+  /* Scrollable region with no visible scrollbar (wheel / trackpad / touch still work) */
+  .scrollbar-hide {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+  .scrollbar-hide::-webkit-scrollbar {
+    display: none;
+    width: 0;
+    height: 0;
+  }
+}
+
 @keyframes filter-fade-in {
   from { opacity: 0; transform: translateY(-2px); }
   to { opacity: 1; transform: translateY(0); }

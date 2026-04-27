@@ -13,7 +13,7 @@ export function CSVPreviewModal({ filename, records, fileSize, onClose }: CSVPre
   return (
     <div className="glass-modal-backdrop fixed inset-0 z-50 flex items-center justify-center" onClick={onClose}>
       <div
-        className="glass-modal-panel relative mx-4 flex max-h-[88vh] w-full max-w-5xl flex-col animate-fade-in"
+        className="glass-modal-panel relative mx-4 flex min-h-0 max-h-[88vh] w-full max-w-5xl flex-col animate-fade-in"
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -27,19 +27,35 @@ export function CSVPreviewModal({ filename, records, fileSize, onClose }: CSVPre
           </Button>
         </div>
 
-        {/* Scrollable Table */}
-        <div className="flex-1 overflow-auto px-6 py-4">
-          <table className="w-full text-sm">
-            <thead className="sticky top-0 z-10 bg-muted">
-              <tr className="border-b border-border text-muted-foreground">
-                <th className="pb-3 pr-4 text-left font-medium">#</th>
-                <th className="pb-3 pr-4 text-left font-medium">Sales Order</th>
-                <th className="pb-3 pr-4 text-left font-medium">Customer</th>
-                <th className="pb-3 pr-4 text-left font-medium">Material</th>
-                <th className="pb-3 pr-4 text-left font-medium">Plant</th>
-                <th className="pb-3 pr-4 text-left font-medium">Req. Delivery</th>
-                <th className="pb-3 pr-4 text-right font-medium">Risk Score</th>
-                <th className="pb-3 text-center font-medium">Status</th>
+        {/* Scrollable Table — sticky header on each th so body rows never paint over labels */}
+        <div className="min-h-0 flex-1 overflow-auto px-6 py-4">
+          <table className="w-full border-separate border-spacing-0 text-sm">
+            <thead>
+              <tr className="text-muted-foreground">
+                <th className="sticky top-0 z-20 border-b border-border bg-muted py-3 pr-4 text-left font-medium shadow-[0_1px_0_0_hsl(var(--border))]">
+                  #
+                </th>
+                <th className="sticky top-0 z-20 border-b border-border bg-muted py-3 pr-4 text-left font-medium shadow-[0_1px_0_0_hsl(var(--border))]">
+                  Sales Order
+                </th>
+                <th className="sticky top-0 z-20 border-b border-border bg-muted py-3 pr-4 text-left font-medium shadow-[0_1px_0_0_hsl(var(--border))]">
+                  Customer
+                </th>
+                <th className="sticky top-0 z-20 border-b border-border bg-muted py-3 pr-4 text-left font-medium shadow-[0_1px_0_0_hsl(var(--border))]">
+                  Material
+                </th>
+                <th className="sticky top-0 z-20 border-b border-border bg-muted py-3 pr-4 text-left font-medium shadow-[0_1px_0_0_hsl(var(--border))]">
+                  Plant
+                </th>
+                <th className="sticky top-0 z-20 border-b border-border bg-muted py-3 pr-4 text-left font-medium shadow-[0_1px_0_0_hsl(var(--border))]">
+                  Req. Delivery
+                </th>
+                <th className="sticky top-0 z-20 border-b border-border bg-muted py-3 pr-4 text-right font-medium shadow-[0_1px_0_0_hsl(var(--border))]">
+                  Risk Score
+                </th>
+                <th className="sticky top-0 z-20 border-b border-border bg-muted py-3 text-center font-medium shadow-[0_1px_0_0_hsl(var(--border))]">
+                  Status
+                </th>
               </tr>
             </thead>
             <tbody>

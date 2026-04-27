@@ -1,7 +1,8 @@
-import { useState, useEffect, useMemo, useTransition, useRef, useCallback, lazy, Suspense } from "react";
+import { useState, useEffect, useLayoutEffect, useMemo, useTransition, useRef, useCallback, lazy, Suspense } from "react";
 import { AppLayout } from "@/components/AppLayout";
 import { KPICard } from "@/components/KPICard";
-import { OTIFChart } from "@/components/OTIFChart";
+import { OTIFDistributionChartInline } from "@/components/OTIFChart";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { OrderTable } from "@/components/OrderTable";
 import { OrderDetailModal } from "@/components/OrderDetailModal";
 const OTIFAnalyticsPanel = lazy(() =>
@@ -12,11 +13,12 @@ import { getDashboardData } from "@/lib/dataStore";
 import { cn } from "@/lib/utils";
 import { fetchFavorites, saveFavorite, deleteFavorite, type FavoriteFilter } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
-import { Package, XCircle, CheckCircle, TrendingDown, Calendar, ChevronDown, Download, Star, Trash2, Save, LayoutDashboard, BarChart3 } from "lucide-react";
+import { Package, Loader2, XCircle, CheckCircle, TrendingDown, Calendar, ChevronDown, Download, Star, Trash2, Save, LayoutDashboard, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import type { OTIFRecord, PeriodFilter } from "@/types/otif";
+import type { OrderTableDrillPayload } from "@/components/OTIFAnalyticsPanel";
 
 const periods: PeriodFilter[] = [
   { label: "All Time", value: "all" },
@@ -49,6 +51,8 @@ export default function Dashboard() {
   const [selectedCreationPeriod, setSelectedCreationPeriod] = useState("all");
   const [selectedOrder, setSelectedOrder] = useState<OTIFRecord | null>(null);
   const [activeTab, setActiveTab] = useState<"dashboard" | "analytics">("dashboard");
+  /** Keep analytics subtree mounted after first visit so switching back to the dashboard does not remount OrderTable/chart (avoids ~1s lag). */
+  const [analyticsMounted, setAnalyticsMounted] = useState(false);
 
   const { token } = useAuth();
   const [favorites, setFavorites] = useState<FavoriteFilter[]>([]);
@@ -56,6 +60,19 @@ export default function Dashboard() {
   const [showSaveFav, setShowSaveFav] = useState(false);
   const [favDropdownOpen, setFavDropdownOpen] = useState(false);
   const [filtersTrayOpen, setFiltersTrayOpen] = useState(false);
+  const [orderTablePageSize, setOrderTablePageSize] = useState(25);
+  const [orderTableDrill, setOrderTableDrill] = useState<OrderTableDrillPayload | null>(null);
+  /** Only one OTIF distribution HoverCard open at a time (avoids the first popover sticking when moving to another card). */
+  const [distributionPopover, setDistributionPopover] = useState<"miss" | "hit" | "rate" | null>(null);
+  const handleDistributionPopoverChange = useCallback((key: "miss" | "hit" | "rate", open: boolean) => {
+    setDistributionPopover((prev) => {
+      if (open) return key;
+      return prev === key ? null : prev;
+    });
+  }, []);
+  const handleOrderTableDrillApplied = useCallback(() => {
+    setOrderTableDrill(null);
+  }, []);
 
   useEffect(() => {
     if (!filtersTrayOpen) return;
@@ -72,13 +89,25 @@ export default function Dashboard() {
     }
   }, [filtersTrayOpen]);
 
-  // Load data from in-memory store
   useEffect(() => {
-    const { records, rawHeaders } = getDashboardData();
-    if (records.length > 0 && orders.length === 0) {
-      loadDashboard(records);
-    }
+    if (activeTab === "analytics") setAnalyticsMounted(true);
+  }, [activeTab]);
+
+  // Warm the lazy analytics chunk so the first switch to Analytics is less likely to stall.
+  useEffect(() => {
+    const id = window.setTimeout(() => {
+      void import("@/components/OTIFAnalyticsPanel");
+    }, 300);
+    return () => clearTimeout(id);
   }, []);
+
+  // Hydrate dashboard from in-memory store (after navigation from Document Repository)
+  useLayoutEffect(() => {
+    const { records } = getDashboardData();
+    if (records.length > 0) {
+      void loadDashboard(records);
+    }
+  }, [loadDashboard]);
 
   // Load global favorites
   useEffect(() => {
@@ -238,6 +267,36 @@ export default function Dashboard() {
     URL.revokeObjectURL(url);
   };
 
+  const { records: storeRecords, filename: pendingFilename } = getDashboardData();
+  const awaitingStoreHydration = storeRecords.length > 0 && orders.length === 0;
+  const showDashboardLoading = loading || awaitingStoreHydration;
+
+  if (showDashboardLoading) {
+    return (
+      <AppLayout>
+        <div
+          className="flex min-h-[60vh] flex-col items-center justify-center px-8"
+          role="status"
+          aria-live="polite"
+          aria-busy="true"
+        >
+          <Loader2 className="mb-4 h-12 w-12 animate-spin text-primary" aria-hidden />
+          <h2 className="text-xl font-semibold text-foreground">Loading dashboard…</h2>
+          <p className="mt-2 max-w-md text-center text-sm text-muted-foreground">
+            {pendingFilename ? (
+              <>
+                Importing <span className="font-medium text-foreground/90">{pendingFilename}</span> and
+                building your metrics.
+              </>
+            ) : (
+              "Preparing your OTIF metrics and order list."
+            )}
+          </p>
+        </div>
+      </AppLayout>
+    );
+  }
+
   if (!summary || orders.length === 0) {
     return (
       <AppLayout>
@@ -251,6 +310,12 @@ export default function Dashboard() {
       </AppLayout>
     );
   }
+
+  const displaySummary = filteredSummary ?? summary;
+  const totalN = displaySummary.totalOrders;
+  const missN = displaySummary.otifMiss;
+  const hitN = displaySummary.otifHit;
+  const missPct = displaySummary.missRate;
 
   return (
     <AppLayout>
@@ -282,7 +347,8 @@ export default function Dashboard() {
             <div
               className="pointer-events-none absolute left-1 top-1 bottom-1 rounded-xl border border-primary/25 bg-primary/15 shadow-[0_0_24px_-8px_hsl(var(--primary)/0.45)] backdrop-blur-md transition-transform duration-300 ease-smooth dark:border-primary/30 dark:bg-primary/20"
               style={{
-                width: "calc((100% - 0.25rem) / 2)",
+                /* Match each tab: (track − horizontal padding − gap) / 2 = (100% − 3×p-1) / 2 */
+                width: "calc((100% - 0.75rem) / 2)",
                 transform:
                   activeTab === "dashboard"
                     ? "translateX(0)"
@@ -321,16 +387,29 @@ export default function Dashboard() {
             </button>
           </div>
 
-          <button
+          <Button
             type="button"
+            variant="outline"
+            size="sm"
             onClick={() => setFiltersTrayOpen((o) => !o)}
-            className="shrink-0 self-end text-sm font-medium text-[#6B7280] outline-none transition-colors hover:text-neutral-700 focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:text-neutral-400 dark:hover:text-neutral-300 md:self-center"
             aria-expanded={filtersTrayOpen}
             aria-controls="manage-filters-panel"
             id="active-filters-summary-trigger"
+            className={cn(
+              "shrink-0 self-end gap-1.5 rounded-xl border-border/70 font-medium shadow-sm md:self-center",
+              filtersTrayOpen &&
+                "border-primary/40 bg-primary/[0.08] text-primary shadow-sm dark:border-primary/35 dark:bg-primary/[0.12] dark:text-primary",
+            )}
           >
             Active filters
-          </button>
+            <ChevronDown
+              className={cn(
+                "h-4 w-4 shrink-0 opacity-70 transition-transform duration-200",
+                filtersTrayOpen && "rotate-180",
+              )}
+              aria-hidden
+            />
+          </Button>
           </div>
 
           <div
@@ -499,46 +578,134 @@ export default function Dashboard() {
           </div>
 
         <div className="animate-fade-in">
-        {activeTab === "analytics" ? (
-          <Suspense
-            fallback={
-              <div className="py-20 text-center text-sm text-muted-foreground">Loading analytics…</div>
-            }
+          <div
+            className={cn(activeTab !== "dashboard" && "hidden")}
+            aria-hidden={activeTab !== "dashboard"}
           >
-            <OTIFAnalyticsPanel orders={filteredOrders} />
-          </Suspense>
-        ) : (
-        <>
-        {/* KPI Cards */}
-        <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <KPICard label="Total Orders" value={filteredSummary?.totalOrders ?? summary.totalOrders} description="Orders evaluated" icon={Package} variant="default" />
-          <KPICard label="OTIF Miss Prediction" value={filteredSummary?.otifMiss ?? summary.otifMiss} description="Predicted to miss delivery" icon={XCircle} variant="risk" />
-          <KPICard label="OTIF Hit Prediction" value={filteredSummary?.otifHit ?? summary.otifHit} description="Predicted on-time delivery" icon={CheckCircle} variant="success" />
-          <KPICard label="Miss Rate Prediction" value={`${filteredSummary?.missRate ?? summary.missRate}%`} description="Orders predicted to miss" icon={TrendingDown} variant="info" />
-        </div>
+            {/* KPI Cards */}
+            <div className="mb-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+              <div onPointerEnter={() => setDistributionPopover(null)}>
+                <KPICard
+                  label="Total Orders"
+                  value={totalN}
+                  description="Orders evaluated"
+                  calculation={`Count of orders after Req. Delivery and SO Create date filters.\n= ${totalN.toLocaleString()} rows in the table below.`}
+                  icon={Package}
+                  variant="default"
+                />
+              </div>
+              <HoverCard
+                open={distributionPopover === "miss"}
+                onOpenChange={(open) => handleDistributionPopoverChange("miss", open)}
+                openDelay={120}
+                closeDelay={0}
+              >
+                <HoverCardTrigger asChild>
+                  <div className="min-h-0 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                    <KPICard
+                      label="OTIF Miss Prediction"
+                      value={missN}
+                      description="Predicted to miss delivery"
+                      calculation={`Orders with model prediction status "Miss" in the filtered set.\n= ${missN.toLocaleString()} of ${totalN.toLocaleString()} orders.`}
+                      icon={XCircle}
+                      variant="risk"
+                    />
+                  </div>
+                </HoverCardTrigger>
+                <HoverCardContent side="bottom" align="start" className="w-[min(22rem,calc(100vw-2rem))] p-3">
+                  <p className="mb-2 text-xs font-semibold text-foreground">OTIF distribution (filtered)</p>
+                  <OTIFDistributionChartInline summary={displaySummary} height={150} />
+                </HoverCardContent>
+              </HoverCard>
+              <HoverCard
+                open={distributionPopover === "hit"}
+                onOpenChange={(open) => handleDistributionPopoverChange("hit", open)}
+                openDelay={120}
+                closeDelay={0}
+              >
+                <HoverCardTrigger asChild>
+                  <div className="min-h-0 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                    <KPICard
+                      label="OTIF Hit Prediction"
+                      value={hitN}
+                      description="Predicted on-time delivery"
+                      calculation={`Orders with prediction status "Hit", or all non-Miss rows.\n= ${totalN.toLocaleString()} − ${missN.toLocaleString()} = ${hitN.toLocaleString()}.`}
+                      icon={CheckCircle}
+                      variant="success"
+                    />
+                  </div>
+                </HoverCardTrigger>
+                <HoverCardContent side="bottom" align="start" className="w-[min(22rem,calc(100vw-2rem))] p-3">
+                  <p className="mb-2 text-xs font-semibold text-foreground">OTIF distribution (filtered)</p>
+                  <OTIFDistributionChartInline summary={displaySummary} height={150} />
+                </HoverCardContent>
+              </HoverCard>
+              <HoverCard
+                open={distributionPopover === "rate"}
+                onOpenChange={(open) => handleDistributionPopoverChange("rate", open)}
+                openDelay={120}
+                closeDelay={0}
+              >
+                <HoverCardTrigger asChild>
+                  <div className="min-h-0 rounded-xl outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2">
+                    <KPICard
+                      label="Miss Rate Prediction"
+                      value={`${missPct}%`}
+                      description="Share of orders predicted to miss"
+                      calculation={`(Miss count ÷ Total orders) × 100, one decimal.\n= (${missN} ÷ ${totalN}) × 100 = ${missPct}%.`}
+                      icon={TrendingDown}
+                      variant="info"
+                    />
+                  </div>
+                </HoverCardTrigger>
+                <HoverCardContent side="bottom" align="start" className="w-[min(22rem,calc(100vw-2rem))] p-3">
+                  <p className="mb-2 text-xs font-semibold text-foreground">OTIF distribution (filtered)</p>
+                  <OTIFDistributionChartInline summary={displaySummary} height={150} />
+                </HoverCardContent>
+              </HoverCard>
+            </div>
 
-        {/* Chart */}
-        <div className="mb-6">
-          <OTIFChart summary={filteredSummary ?? summary} />
-        </div>
+            {/* Order Table */}
+            <OrderTable
+              orders={filteredOrders}
+              rawHeaders={getDashboardData().rawHeaders}
+              onOrderClick={handleOrderClick}
+              pageSize={orderTablePageSize}
+              onPageSizeChange={setOrderTablePageSize}
+              drillFilter={orderTableDrill}
+              onDrillFilterApplied={handleOrderTableDrillApplied}
+            />
 
-        {/* Order Table */}
-        <OrderTable
-          orders={filteredOrders}
-          rawHeaders={getDashboardData().rawHeaders}
-          onOrderClick={handleOrderClick}
-        />
+            {/* Order Detail Modal */}
+            {selectedOrder && (
+              <OrderDetailModal
+                detail={detail}
+                loading={detailLoading}
+                onClose={() => { setDetail(null); setSelectedOrder(null); }}
+              />
+            )}
+          </div>
 
-        {/* Order Detail Modal */}
-        {selectedOrder && (
-          <OrderDetailModal
-            detail={detail}
-            loading={detailLoading}
-            onClose={() => { setDetail(null); setSelectedOrder(null); }}
-          />
-        )}
-        </>
-        )}
+          {analyticsMounted ? (
+            <div
+              className={cn(activeTab !== "analytics" && "hidden")}
+              aria-hidden={activeTab !== "analytics"}
+            >
+              <Suspense
+                fallback={
+                  <div className="py-20 text-center text-sm text-muted-foreground">Loading analytics…</div>
+                }
+              >
+                <OTIFAnalyticsPanel
+                  orders={filteredOrders}
+                  onDrillToOrderTable={(payload) => {
+                    setActiveTab("dashboard");
+                    setOrderTableDrill(payload);
+                  }}
+                />
+              </Suspense>
+            </div>
+          ) : null}
         </div>
       </div>
     </AppLayout>

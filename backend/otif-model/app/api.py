@@ -218,13 +218,6 @@ def get_user_by_email(db: Session, email: str) -> Optional[User]:
     return db.query(User).filter(User.email == email).first()
 
 
-def authenticate_user(db: Session, email: str, password: str) -> Optional[User]:
-    user = get_user_by_email(db, email)
-    if not user or not verify_password(password, user.hashed_password):
-        return None
-    return user
-
-
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="auth/login")
 
 def get_current_user(db: Session = Depends(get_db), token: str = Depends(oauth2_scheme)) -> User:
@@ -308,9 +301,17 @@ def register(user_in: UserCreate, db: Session = Depends(get_db)) -> UserOut:
 
 @app.post("/auth/login", response_model=Token)
 def login(form_data: OAuth2PasswordRequestForm = Depends(), db: Session = Depends(get_db)) -> Token:
-    user = authenticate_user(db, form_data.username, form_data.password)
+    user = get_user_by_email(db, form_data.username)
     if not user:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect email or password")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="USER_NOT_FOUND",
+        )
+    if not verify_password(form_data.password, user.hashed_password):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="WRONG_PASSWORD",
+        )
 
     access_token = create_access_token(data={"sub": str(user.id)})
     return Token(access_token=access_token, user=user)  # type: ignore[arg-type]

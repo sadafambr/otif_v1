@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuth } from "@/hooks/useAuth";
+import { humanizeLoginError } from "@/lib/authMessages";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 
@@ -19,8 +20,8 @@ export default function Login() {
     try {
       await login(email, password);
       navigate("/dashboard");
-    } catch (err: any) {
-      setError(err.message ?? "Login failed");
+    } catch (err: unknown) {
+      setError(humanizeLoginError(err));
     } finally {
       setLoading(false);
     }

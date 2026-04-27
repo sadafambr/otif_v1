@@ -45,6 +45,15 @@ function isRiskSignalsColumnKey(key: string): boolean {
 import { cn } from "@/lib/utils";
 import type { OTIFRecord } from "@/types/otif";
 
+const PAGE_SIZE_MIN = 1;
+const PAGE_SIZE_MAX = 10_000;
+
+function clampPageSize(raw: number): number {
+  if (!Number.isFinite(raw)) return PAGE_SIZE_MIN;
+  const n = Math.floor(raw);
+  return Math.min(PAGE_SIZE_MAX, Math.max(PAGE_SIZE_MIN, n));
+}
+
 const COMPUTED_COLUMN_KEYS = ["leadTime", "riskScore", "status", "riskSignals"] as const;
 const COMPUTED_DISPLAY_NAMES: Record<string, string> = {
   leadTime: "Lead Time",
@@ -53,10 +62,24 @@ const COMPUTED_DISPLAY_NAMES: Record<string, string> = {
   riskSignals: "Risk Signals",
 };
 
+/** Maps analytics Miss rate dimension ids to order table column keys (first match wins). */
+const DRILL_DIMENSION_TO_COLUMNS: Record<string, string[]> = {
+  plant: ["plant"],
+  material: ["material"],
+  customer: ["customer name", "customer"],
+  businessUnit: ["division of business name"],
+};
+
 interface OrderTableProps {
   orders: OTIFRecord[];
   rawHeaders?: string[];
   onOrderClick: (order: OTIFRecord) => void;
+  /** Controlled page size (e.g. from Dashboard). If omitted, OrderTable keeps its own state (default 25). */
+  pageSize?: number;
+  onPageSizeChange?: (size: number) => void;
+  /** When set, apply a checkbox filter for that dimension value then clear via onDrillFilterApplied. */
+  drillFilter?: { dimensionId: string; value: string } | null;
+  onDrillFilterApplied?: () => void;
 }
 
 type SortKey = string;
@@ -139,7 +162,7 @@ function getColumnDisplayName(key: string): string {
 function getCellValue(order: OTIFRecord, columnKey: string): string | number {
   if (columnKey === "leadTime") {
     // Negative lead times are not meaningful in the UI — clamp to 0 days.
-    const leadTimeDays = parseInt(order.leadTime, 10);
+    const leadTimeDays = parseInt(String(order.leadTime ?? "").trim(), 10);
     if (isNaN(leadTimeDays)) return order.leadTime;
     return Math.max(0, leadTimeDays);
   }
@@ -210,6 +233,18 @@ const SHAP_FEATURE_LABELS: Record<string, string> = {
 
 const LEAD_TIME_THRESHOLD = 60;
 
+/**
+ * Days value used for lead-time segmentation — must match what the Lead Time column shows.
+ * Returns null when there is no numeric lead time (those rows are excluded from "≥ 60 days").
+ */
+function parseLeadTimeDaysForFilter(order: OTIFRecord): number | null {
+  const v = getCellValue(order, "leadTime");
+  if (typeof v === "number" && Number.isFinite(v)) return v;
+  const n = parseInt(String(v).replace(/,/g, "").trim(), 10);
+  if (isNaN(n)) return null;
+  return Math.max(0, n);
+}
+
 /** Stable empty selection — avoids allocating `new Set()` on every render */
 const EMPTY_FILTER_SELECTION = new Set<string>();
 
@@ -257,12 +292,55 @@ function buildColumnFacets(
   return { uniqueValues, rangeBounds };
 }
 
-export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps) {
+export function OrderTable({
+  orders,
+  rawHeaders,
+  onOrderClick,
+  pageSize: pageSizeProp,
+  onPageSizeChange,
+  drillFilter,
+  onDrillFilterApplied,
+}: OrderTableProps) {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortKey | null>(null);
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [page, setPage] = useState(1);
-  const pageSize = 25;
+  const [goToPageOpen, setGoToPageOpen] = useState(false);
+  const [goToPageDraft, setGoToPageDraft] = useState("");
+  const [internalPageSize, setInternalPageSize] = useState(25);
+  const pageSize = pageSizeProp ?? internalPageSize;
+  const [pageSizeDraft, setPageSizeDraft] = useState(() => String(pageSizeProp ?? 25));
+
+  useEffect(() => {
+    setPageSizeDraft(String(pageSize));
+  }, [pageSize]);
+
+  const commitPageSize = (n: number) => {
+    const clamped = clampPageSize(n);
+    if (clamped === pageSize) return;
+    setPage(1);
+    if (pageSizeProp !== undefined) {
+      onPageSizeChange?.(clamped);
+    } else {
+      setInternalPageSize(clamped);
+    }
+  };
+
+  const flushPageSizeDraft = () => {
+    const trimmed = pageSizeDraft.trim();
+    if (trimmed === "") {
+      setPageSizeDraft(String(pageSize));
+      return;
+    }
+    const parsed = Number.parseInt(trimmed, 10);
+    if (!Number.isFinite(parsed)) {
+      setPageSizeDraft(String(pageSize));
+      return;
+    }
+    const clamped = clampPageSize(parsed);
+    commitPageSize(clamped);
+    setPageSizeDraft(String(clamped));
+  };
 
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
   const draggingKeyRef = useRef<string | null>(null);
@@ -494,6 +572,54 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
     [leadTimeMode, checkboxFilters, rangeFilters, dateFilters]
   );
 
+  useEffect(() => {
+    if (!drillFilter) return;
+    if (availableColumnKeys.length === 0) return;
+
+    const candidates = DRILL_DIMENSION_TO_COLUMNS[drillFilter.dimensionId] ?? [];
+    const key = candidates.find((k) => availableColumnKeys.includes(k));
+    if (!key) {
+      onDrillFilterApplied?.();
+      return;
+    }
+    if (getColumnFilterType(key) !== "checkbox") {
+      onDrillFilterApplied?.();
+      return;
+    }
+    const opts = getUniqueValues(key);
+    let v = drillFilter.value;
+    if (v === "(blank)" || v === "") {
+      if (opts.includes("")) v = "";
+      else if (!opts.includes("(blank)") && opts.length > 0) {
+        v = opts.find((o) => !String(o).trim()) ?? v;
+      }
+    }
+    if (!opts.includes(v)) {
+      const t = String(v).trim();
+      const exact = opts.find((o) => String(o).trim() === t);
+      if (exact) v = exact;
+      else {
+        const ci = opts.find((o) => o.toLowerCase() === t.toLowerCase());
+        if (ci) v = ci;
+      }
+    }
+
+    startTransition(() => {
+      setCheckboxFilter(key, new Set([v]));
+      setPage(1);
+      setVisibleColumnKeys((prev) => (prev.includes(key) ? prev : [...prev, key]));
+    });
+    onDrillFilterApplied?.();
+  }, [
+    drillFilter,
+    availableColumnKeys,
+    columnFacets,
+    getColumnFilterType,
+    getUniqueValues,
+    onDrillFilterApplied,
+    setCheckboxFilter,
+  ]);
+
   const clearAllFilters = () => {
     setCheckboxFilters({});
     setRangeFilters({});
@@ -530,11 +656,11 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
       });
     }
 
-    // Lead time filter
+    // Lead time filter (same numeric basis as the Lead Time column; non-numeric rows only in "< 60")
     result = result.filter((o) => {
-      const lt = parseInt(o.leadTime, 10);
-      if (isNaN(lt)) return true;
-      return leadTimeMode === "lt" ? lt < LEAD_TIME_THRESHOLD : lt >= LEAD_TIME_THRESHOLD;
+      const days = parseLeadTimeDaysForFilter(o);
+      if (days === null) return leadTimeMode === "lt";
+      return leadTimeMode === "lt" ? days < LEAD_TIME_THRESHOLD : days >= LEAD_TIME_THRESHOLD;
     });
 
     // Dynamic checkbox filters
@@ -703,11 +829,26 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
 
   return (
     <div className="glass-table-panel animate-fade-in pl-4">
-      <div className="flex items-center justify-between border-b px-6 py-4">
-        <div>
-          <h3 className="text-lg font-semibold text-foreground">Order-Level OTIF Assessment</h3>
+      {/* 1fr | auto | 1fr: true horizontal center for search; title flush left; actions flush right */}
+      <div className="grid grid-cols-[1fr_auto_1fr] items-center gap-x-3 gap-y-2 border-b px-6 py-4">
+        <div className="min-w-0 justify-self-start pr-2">
+          <h3 className="truncate text-left text-lg font-semibold text-foreground">
+            Order-Level OTIF Assessment
+          </h3>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="relative w-full min-w-[12rem] max-w-md justify-self-center sm:w-72">
+          <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <Input
+            placeholder="Search orders…"
+            value={search}
+            onChange={(e) => {
+              setSearch(e.target.value);
+              setPage(1);
+            }}
+            className="rounded-full border-neutral-200 bg-white pl-9 dark:border-border dark:bg-background"
+          />
+        </div>
+        <div className="flex min-w-0 shrink-0 items-center justify-end justify-self-end gap-2 pl-2">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <Button variant="outline" size="sm">
@@ -801,21 +942,15 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
         </div>
       </div>
 
-      {/* ── Search + Filter bar ── */}
-      <div className="px-6 py-3 space-y-3">
-        {/* Search */}
-        <div className="relative max-w-lg">
-          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-          <Input
-            placeholder="Search orders…"
-            value={search}
-            onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-            className="pl-9"
-          />
-        </div>
-
+      {/* ── Filter bar ── */}
+      <div className="space-y-3 px-6 py-3">
         {/* ── Dynamic column filter dock ── */}
-        <div className="flex flex-wrap items-center gap-2">
+        <div
+          className={cn(
+            "scrollbar-hide flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto overflow-y-visible pb-1 [-webkit-overflow-scrolling:touch]",
+            "[&>*]:shrink-0",
+          )}
+        >
           {statusFilterKey && (
             <div
               className={cn(
@@ -874,7 +1009,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                 type="button"
                 onClick={() => {
                   setPage(1);
-                  startTransition(() => setLeadTimeMode("lt"));
+                  setLeadTimeMode("lt");
                 }}
                 className={cn(
                   "rounded-lg px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
@@ -889,7 +1024,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                 type="button"
                 onClick={() => {
                   setPage(1);
-                  startTransition(() => setLeadTimeMode("gte"));
+                  setLeadTimeMode("gte");
                 }}
                 className={cn(
                   "rounded-lg px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
@@ -991,7 +1126,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
             <button
               type="button"
               onClick={clearAllFilters}
-              className="ml-auto inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
+              className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-destructive transition-colors"
             >
               <RotateCcw className="h-3 w-3" />
               Clear Filters
@@ -1002,9 +1137,41 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
           )}
         </div>
 
-        <p className="text-xs text-muted-foreground">
-          Showing {pageOrders.length} of {filtered.length} orders
-        </p>
+        <div className="flex flex-col gap-2 text-xs text-muted-foreground sm:flex-row sm:items-center sm:justify-between sm:gap-x-4">
+          <p className="min-w-0">
+            Showing <span className="tabular-nums text-foreground/90">{pageOrders.length}</span> of{" "}
+            <span className="tabular-nums text-foreground/90">{filtered.length}</span> orders
+          </p>
+          <div className="flex shrink-0 items-center gap-2">
+            <label htmlFor="order-page-size" className="whitespace-nowrap">
+              Rows per page
+            </label>
+            <Input
+              id="order-page-size"
+              type="number"
+              min={PAGE_SIZE_MIN}
+              max={PAGE_SIZE_MAX}
+              step={1}
+              inputMode="numeric"
+              aria-label="Rows per page"
+              title={`${PAGE_SIZE_MIN}–${PAGE_SIZE_MAX} rows`}
+              className={cn(
+                "h-8 w-[4.5rem] tabular-nums px-2 text-xs shadow-sm [appearance:textfield]",
+                "[&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none",
+              )}
+              value={pageSizeDraft}
+              onChange={(e) => setPageSizeDraft(e.target.value)}
+              onBlur={flushPageSizeDraft}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  flushPageSizeDraft();
+                  (e.target as HTMLInputElement).blur();
+                }
+              }}
+            />
+          </div>
+        </div>
       </div>
 
 
@@ -1133,11 +1300,69 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
         </table>        </div>      </div>
 
       {totalPages > 1 && (
-        <div className="flex items-center justify-between border-t px-6 py-3">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-t px-6 py-3">
           <Button variant="outline" size="sm" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}>
             Previous
           </Button>
-          <span className="text-sm text-muted-foreground">Page {page} of {totalPages}</span>
+          <div className="flex min-h-8 flex-col items-center justify-center gap-1 sm:flex-row sm:gap-3">
+            {!goToPageOpen ? (
+              <>
+                <span className="text-sm text-muted-foreground">
+                  Page {page} of {totalPages}
+                </span>
+                <button
+                  type="button"
+                  className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+                  onClick={() => {
+                    setGoToPageDraft(String(page));
+                    setGoToPageOpen(true);
+                  }}
+                >
+                  Go to page…
+                </button>
+              </>
+            ) : (
+              <form
+                className="flex flex-wrap items-center justify-center gap-2"
+                onSubmit={(e) => {
+                  e.preventDefault();
+                  const n = Number.parseInt(goToPageDraft.trim(), 10);
+                  if (!Number.isFinite(n)) return;
+                  const next = Math.min(totalPages, Math.max(1, n));
+                  setPage(next);
+                  setGoToPageOpen(false);
+                }}
+              >
+                <span className="text-xs text-muted-foreground">Page</span>
+                <Input
+                  type="number"
+                  min={1}
+                  max={totalPages}
+                  inputMode="numeric"
+                  value={goToPageDraft}
+                  onChange={(e) => setGoToPageDraft(e.target.value)}
+                  className="h-8 w-16 text-center text-sm [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setGoToPageOpen(false);
+                    }
+                  }}
+                />
+                <span className="text-xs text-muted-foreground">of {totalPages}</span>
+                <Button type="submit" size="sm" className="h-8 px-3">
+                  Go
+                </Button>
+                <button
+                  type="button"
+                  className="text-xs text-muted-foreground hover:text-foreground"
+                  onClick={() => setGoToPageOpen(false)}
+                >
+                  Cancel
+                </button>
+              </form>
+            )}
+          </div>
           <Button variant="outline" size="sm" disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)}>
             Next
           </Button>

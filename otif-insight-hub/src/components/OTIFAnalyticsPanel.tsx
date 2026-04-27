@@ -189,13 +189,16 @@ function HitMissPieTooltip({ active, payload }: { active?: boolean; payload?: Ar
   const total = payload.reduce((s, p) => s + (typeof p.value === "number" ? p.value : 0), 0);
   const pct = total > 0 ? ((value / total) * 100).toFixed(1) : "0.0";
   return (
-    <div className="glass-popover rounded-lg border border-border/50 px-3 py-2 text-sm shadow-md">
-      <p className="text-xs font-semibold" style={{ color: row.color }}>
-        {name}
-      </p>
-      <p className="mt-1 text-xs tabular-nums text-foreground">
-        Count: {value.toLocaleString()} <span className="text-muted-foreground">({pct}%)</span>
-      </p>
+    <div className="z-[200] min-w-[10rem] rounded-lg border border-border/50 bg-popover px-3 py-2.5 text-sm shadow-lg">
+      <div className="flex flex-col gap-1.5 leading-snug">
+        <p className="text-xs font-semibold leading-tight" style={{ color: row.color }}>
+          {name}
+        </p>
+        <p className="text-xs tabular-nums leading-normal text-foreground">
+          Count: {value.toLocaleString()}{" "}
+          <span className="text-muted-foreground">({pct}%)</span>
+        </p>
+      </div>
     </div>
   );
 }
@@ -341,12 +344,20 @@ function DimensionHitMissTooltip({ active, payload }: { active?: boolean; payloa
   );
 }
 
+export type OrderTableDrillPayload = {
+  dimensionId: string;
+  value: string;
+};
+
 interface OTIFAnalyticsPanelProps {
   orders: OTIFRecord[];
+  /** Switch to dashboard order table filtered to this dimension value (e.g. Miss rate table row). */
+  onDrillToOrderTable?: (payload: OrderTableDrillPayload) => void;
 }
 
-function OTIFAnalyticsPanelInner({ orders }: OTIFAnalyticsPanelProps) {
-  const [missCardExpanded, setMissCardExpanded] = useState<Record<string, boolean>>({});
+function OTIFAnalyticsPanelInner({ orders, onDrillToOrderTable }: OTIFAnalyticsPanelProps) {
+  /** One toggle expands/collapses every Miss Overview card that has enough rows. */
+  const [missOverviewExpanded, setMissOverviewExpanded] = useState(false);
   const [selectedDimension, setSelectedDimension] = useState("plant");
   const [tableRowsInput, setTableRowsInput] = useState(String(MISS_TABLE_ROWS_DEFAULT));
   const tableTopNNum = useMemo(() => {
@@ -531,7 +542,7 @@ function OTIFAnalyticsPanelInner({ orders }: OTIFAnalyticsPanelProps) {
             const Icon = dim.icon;
             const ranking = topMissRankings[dim.id] || [];
             const canExpand = ranking.length > TOP_MISS_CARD_ROWS;
-            const isExpanded = !!missCardExpanded[dim.id];
+            const isExpanded = missOverviewExpanded && canExpand;
             const displayRows =
               isExpanded && canExpand
                 ? ranking.slice(0, TOP_MISS_EXPANDED_ROWS)
@@ -550,7 +561,7 @@ function OTIFAnalyticsPanelInner({ orders }: OTIFAnalyticsPanelProps) {
                         type="button"
                         onClick={() => {
                           if (!canExpand) return;
-                          setMissCardExpanded((prev) => ({ ...prev, [dim.id]: !prev[dim.id] }));
+                          setMissOverviewExpanded((v) => !v);
                         }}
                         className={cn(
                           "flex min-w-0 flex-1 items-center gap-1.5 rounded-md py-0.5 pl-0.5 pr-1 text-left outline-none transition-colors focus-visible:ring-2 focus-visible:ring-ring/50",
@@ -672,7 +683,7 @@ function OTIFAnalyticsPanelInner({ orders }: OTIFAnalyticsPanelProps) {
                   dataKey="value"
                   nameKey="name"
                   cx="50%"
-                  cy="46%"
+                  cy="50%"
                   innerRadius="54%"
                   outerRadius="78%"
                   paddingAngle={2}
@@ -685,7 +696,7 @@ function OTIFAnalyticsPanelInner({ orders }: OTIFAnalyticsPanelProps) {
                     <Cell key={i} fill={entry.color} stroke="hsl(var(--background))" strokeWidth={2} />
                   ))}
                 </Pie>
-                <Tooltip content={<HitMissPieTooltip />} />
+                <Tooltip content={<HitMissPieTooltip />} wrapperStyle={{ zIndex: 200 }} />
                 <Legend
                   layout="horizontal"
                   verticalAlign="bottom"
@@ -695,9 +706,11 @@ function OTIFAnalyticsPanelInner({ orders }: OTIFAnalyticsPanelProps) {
                 />
               </PieChart>
             </ResponsiveContainer>
-            <div className="pointer-events-none absolute left-1/2 top-[42%] -translate-x-1/2 -translate-y-1/2 text-center">
+            <div className="mt-2 text-center">
               <p className="text-[10px] font-bold uppercase tracking-wider text-muted-foreground">Total orders</p>
-              <p className="text-xl font-bold tabular-nums tracking-tight text-foreground">{overallStats.total.toLocaleString()}</p>
+              <p className="text-xl font-bold tabular-nums leading-tight tracking-tight text-foreground">
+                {overallStats.total.toLocaleString()}
+              </p>
             </div>
           </div>
         </div>
@@ -1041,7 +1054,37 @@ function OTIFAnalyticsPanelInner({ orders }: OTIFAnalyticsPanelProps) {
                 </tr>
               )}
               {dimensionTableRows.map((row) => (
-                <tr key={row.fullName} className="border-b border-border/50 hover:bg-muted/30">
+                <tr
+                  key={row.fullName}
+                  className={cn(
+                    "border-b border-border/50 transition-colors",
+                    onDrillToOrderTable
+                      ? "cursor-pointer hover:bg-muted/40"
+                      : "hover:bg-muted/30",
+                  )}
+                  onClick={() => {
+                    onDrillToOrderTable?.({
+                      dimensionId: analyticsDimConfig.id,
+                      value: row.fullName,
+                    });
+                  }}
+                  onKeyDown={(e) => {
+                    if (!onDrillToOrderTable) return;
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onDrillToOrderTable({
+                        dimensionId: analyticsDimConfig.id,
+                        value: row.fullName,
+                      });
+                    }
+                  }}
+                  tabIndex={onDrillToOrderTable ? 0 : undefined}
+                  title={
+                    onDrillToOrderTable
+                      ? `Open dashboard table filtered to ${analyticsDimConfig.label}: ${row.fullName}`
+                      : row.fullName
+                  }
+                >
                   <td className="py-2.5 text-foreground font-medium" title={row.fullName}>{row.name}</td>
                   <td className="py-2.5 text-right text-muted-foreground">{row.total.toLocaleString()}</td>
                   <td className="py-2.5 text-right text-success">{row.hit.toLocaleString()}</td>
