@@ -49,7 +49,17 @@ export async function register(email: string, password: string, role: "admin" | 
 
   if (!res.ok) {
     const data = await res.json().catch(() => ({}));
-    throw new Error(data.detail || "Registration failed");
+    // Pydantic validation errors arrive as an array of objects: [{loc, msg, type}]
+    // Fall back gracefully so users never see "[object Object]"
+    let errorMessage: string;
+    if (Array.isArray(data.detail)) {
+      errorMessage = data.detail.map((e: any) => e.msg ?? String(e)).join("; ");
+    } else if (typeof data.detail === "string" && data.detail) {
+      errorMessage = data.detail;
+    } else {
+      errorMessage = "Registration failed. Please check your details and try again.";
+    }
+    throw new Error(errorMessage);
   }
 }
 

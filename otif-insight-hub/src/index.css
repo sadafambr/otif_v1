@@ -121,6 +121,36 @@
       color var(--motion-slow) var(--motion-ease-standard);
   }
 
+  /* Sleek scrollbars (Firefox + Chromium/WebKit) — theme-aware via --muted-foreground */
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--muted-foreground) / 0.32) transparent;
+  }
+
+  *::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+
+  *::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  *::-webkit-scrollbar-thumb {
+    border-radius: 9999px;
+    border: 2px solid transparent;
+    background-clip: content-box;
+    background-color: hsl(var(--muted-foreground) / 0.28);
+  }
+
+  *::-webkit-scrollbar-thumb:hover {
+    background-color: hsl(var(--muted-foreground) / 0.48);
+  }
+
+  *::-webkit-scrollbar-corner {
+    background: transparent;
+  }
+
   /* Cohesive motion for interactive controls (avoids blanket * { transition: all } ) */
   button,
   [role="button"],
@@ -281,34 +311,6 @@
     transition-timing-function: var(--motion-ease);
   }
 
-  /* Top Miss overview cards — subtle scrollbar */
-  .miss-overview-card-scroll {
-    scrollbar-width: thin;
-    scrollbar-color: rgb(156 163 175 / 0.65) transparent;
-  }
-  .miss-overview-card-scroll::-webkit-scrollbar {
-    width: 6px;
-  }
-  .miss-overview-card-scroll::-webkit-scrollbar-track {
-    background: transparent;
-  }
-  .miss-overview-card-scroll::-webkit-scrollbar-thumb {
-    background-color: rgb(156 163 175 / 0.5);
-    border-radius: 9999px;
-  }
-  .miss-overview-card-scroll::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(107 114 128 / 0.7);
-  }
-  .dark .miss-overview-card-scroll {
-    scrollbar-color: rgb(113 113 122 / 0.5) transparent;
-  }
-  .dark .miss-overview-card-scroll::-webkit-scrollbar-thumb {
-    background-color: rgb(113 113 122 / 0.45);
-  }
-  .dark .miss-overview-card-scroll::-webkit-scrollbar-thumb:hover {
-    background-color: rgb(161 161 170 / 0.55);
-  }
-
   /* Order table column headers — muted chrome, emphasis on hover / active */
   .order-table-filter-trigger {
     @apply inline-flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition-all duration-200 ease-out;
@@ -321,47 +323,3 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
-/* Active filters: fixed top-right popup */
-@keyframes active-filters-backdrop-in {
-  from {
-    opacity: 0;
-  }
-  to {
-    opacity: 1;
-  }
-}
-
-@keyframes active-filters-panel-in {
-  from {
-    opacity: 0;
-    transform: translateY(-10px) scale(0.98);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0) scale(1);
-  }
-}
-
-.active-filters-overlay {
-  animation: active-filters-backdrop-in var(--motion-slow) var(--motion-ease-standard) forwards;
-}
-
-.active-filters-popup-panel {
-  animation: active-filters-panel-in var(--motion-slow) var(--motion-ease) forwards;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .active-filters-overlay,
-  .active-filters-popup-panel {
-    animation: none;
-  }
-
-  .active-filters-overlay {
-    opacity: 1;
-  }
-
-  .active-filters-popup-panel {
-    opacity: 1;
-    transform: none;
-  }
-}

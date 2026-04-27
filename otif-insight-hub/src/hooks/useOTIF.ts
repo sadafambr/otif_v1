@@ -26,6 +26,15 @@ export function useFiles() {
   const uploadFile = useCallback(async (file: File) => {
     setLoading(true);
     try {
+      // Guard: only accept supported file types
+      const allowedExts = [".csv", ".xlsx", ".xlsb"];
+      const nameLower = file.name.toLowerCase();
+      if (!allowedExts.some((ext) => nameLower.endsWith(ext))) {
+        throw new Error(
+          `Unsupported file type "${file.name}". Please upload a .csv, .xlsx, or .xlsb file.`
+        );
+      }
+
       // TODO: Replace with actual API call: POST /upload
       // const formData = new FormData();
       // formData.append('file', file);
@@ -71,6 +80,14 @@ export function useCSVPreview() {
   const parseCSV = useCallback(async (file: File): Promise<OTIFRecord[]> => {
     setLoading(true);
     try {
+      // Guard: only parse supported file types
+      const allowedExts = [".csv", ".xlsx", ".xlsb"];
+      const nameLower = file.name.toLowerCase();
+      if (!allowedExts.some((ext) => nameLower.endsWith(ext))) {
+        console.error(`Unsupported file type: ${file.name}`);
+        return [];
+      }
+
       const text = await file.text();
       const lines = text.trim().split("\n");
       if (lines.length < 2) return [];

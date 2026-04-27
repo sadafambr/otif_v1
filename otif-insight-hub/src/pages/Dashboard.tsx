@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo, useTransition, useRef, useCallback, lazy, Suspense } from "react";
-import { createPortal } from "react-dom";
 import { AppLayout } from "@/components/AppLayout";
 import { KPICard } from "@/components/KPICard";
 import { OTIFChart } from "@/components/OTIFChart";
@@ -13,7 +12,7 @@ import { getDashboardData } from "@/lib/dataStore";
 import { cn } from "@/lib/utils";
 import { fetchFavorites, saveFavorite, deleteFavorite, type FavoriteFilter } from "@/lib/api";
 import { useAuth } from "@/hooks/useAuth";
-import { Package, XCircle, CheckCircle, TrendingDown, Calendar, ChevronDown, ChevronUp, Download, Star, Trash2, Save, LayoutDashboard, BarChart3 } from "lucide-react";
+import { Package, XCircle, CheckCircle, TrendingDown, Calendar, ChevronDown, Download, Star, Trash2, Save, LayoutDashboard, BarChart3 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
@@ -58,11 +57,6 @@ export default function Dashboard() {
   const [favDropdownOpen, setFavDropdownOpen] = useState(false);
   const [filtersTrayOpen, setFiltersTrayOpen] = useState(false);
 
-  const hasCustomGlobalFilters = useMemo(
-    () => selectedPeriod !== "all" || selectedCreationPeriod !== "all",
-    [selectedPeriod, selectedCreationPeriod],
-  );
-
   useEffect(() => {
     if (!filtersTrayOpen) return;
     const onKey = (e: KeyboardEvent) => {
@@ -76,19 +70,6 @@ export default function Dashboard() {
     if (!filtersTrayOpen) {
       setFavDropdownOpen(false);
     }
-  }, [filtersTrayOpen]);
-
-  useEffect(() => {
-    if (!filtersTrayOpen) return;
-    const prevBody = document.body.style.overflow;
-    const main = document.querySelector("main");
-    const prevMain = main ? (main as HTMLElement).style.overflow : "";
-    document.body.style.overflow = "hidden";
-    if (main) (main as HTMLElement).style.overflow = "hidden";
-    return () => {
-      document.body.style.overflow = prevBody;
-      if (main) (main as HTMLElement).style.overflow = prevMain;
-    };
   }, [filtersTrayOpen]);
 
   // Load data from in-memory store
@@ -291,10 +272,10 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* Tabs + compact active filters (chips live in popover) */}
-        <div className="mb-8 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <div className="mb-8 flex flex-col gap-3">
+          <div className="flex w-full flex-col gap-2 md:flex-row md:items-center md:justify-between md:gap-3">
           <div
-            className="relative inline-flex w-full max-w-2xl flex-1 gap-1 rounded-2xl border border-border/60 bg-card/45 p-1 shadow-sm backdrop-blur-xl dark:border-white/[0.08] dark:bg-black/35 dark:shadow-[0_8px_32px_-8px_rgba(0,0,0,0.6)]"
+            className="relative inline-flex w-full max-w-2xl shrink-0 gap-1 rounded-2xl border border-border/60 bg-card/45 p-1 shadow-sm backdrop-blur-xl dark:border-white/[0.08] dark:bg-black/35 dark:shadow-[0_8px_32px_-8px_rgba(0,0,0,0.6)]"
             role="tablist"
             aria-label="Dashboard views"
           >
@@ -343,85 +324,50 @@ export default function Dashboard() {
           <button
             type="button"
             onClick={() => setFiltersTrayOpen((o) => !o)}
-            className={cn(
-              "inline-flex h-[42px] shrink-0 items-center gap-2 rounded-full border border-border/70 bg-background/85 px-3.5 shadow-sm backdrop-blur-md transition-[border-color,box-shadow,background-color,transform] duration-300 ease-out hover:bg-background active:scale-[0.98] dark:border-white/[0.12] dark:bg-black/40 dark:hover:bg-black/55 sm:px-4",
-              filtersTrayOpen && "border-primary/35 bg-primary/[0.07] shadow-[0_0_20px_-8px_hsl(var(--primary)/0.35)] dark:bg-primary/[0.12]",
-            )}
+            className="shrink-0 self-end text-sm font-medium text-[#6B7280] outline-none transition-colors hover:text-neutral-700 focus-visible:ring-2 focus-visible:ring-primary/25 focus-visible:ring-offset-2 focus-visible:ring-offset-background dark:text-neutral-400 dark:hover:text-neutral-300 md:self-center"
             aria-expanded={filtersTrayOpen}
-            aria-haspopup="dialog"
-            aria-controls="manage-filters-popup"
+            aria-controls="manage-filters-panel"
+            id="active-filters-summary-trigger"
           >
-            <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-            <span className="max-w-[7.5rem] truncate text-sm font-semibold text-foreground sm:max-w-none">
-              Active Filters
-            </span>
-            {hasCustomGlobalFilters && (
-              <span
-                className="h-2 w-2 shrink-0 rounded-full bg-primary shadow-[0_0_10px_hsl(var(--primary)/0.55)]"
-                title="Non-default filters"
-              />
-            )}
-            <ChevronDown
-              className={cn(
-                "h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-300 ease-out",
-                filtersTrayOpen && "rotate-180",
-              )}
-            />
+            Active filters
           </button>
-        </div>
+          </div>
 
-        {typeof document !== "undefined" &&
-          filtersTrayOpen &&
-          createPortal(
-            <>
+          <div
+            className={cn(
+              "grid w-full transition-[grid-template-rows] duration-200 ease-in-out motion-reduce:transition-none",
+              filtersTrayOpen ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
+            )}
+          >
+            <div className="min-h-0 overflow-hidden">
               <div
-                className="active-filters-overlay fixed inset-0 z-[200] bg-black/40 dark:bg-black/55"
-                aria-hidden
-                onClick={() => setFiltersTrayOpen(false)}
-              />
-              <div
-                id="manage-filters-popup"
-                role="dialog"
-                aria-modal="true"
-                aria-labelledby="manage-filters-popup-title"
-                className="active-filters-popup-panel glass-popover fixed z-[201] flex max-h-[min(calc(100vh-1.25rem),90vh)] w-[min(42rem,calc(100vw-1.5rem))] flex-col overflow-hidden rounded-2xl border border-border/60 shadow-2xl dark:border-white/[0.12]"
-                style={{
-                  top: "max(0.75rem, env(safe-area-inset-top, 0px))",
-                  right: "max(0.75rem, env(safe-area-inset-right, 0px))",
-                }}
-                onClick={(e) => e.stopPropagation()}
+                id="manage-filters-panel"
+                role="region"
+                aria-labelledby="active-filters-summary-trigger"
+                className={cn(
+                  "rounded-lg border border-neutral-200/90 bg-background px-3 pb-3 pt-2 dark:border-border/80 dark:bg-card",
+                  filtersTrayOpen && "border-neutral-300/90 dark:border-border",
+                )}
               >
-                <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border/50 px-4 py-3 dark:border-white/[0.08]">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <Calendar className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
-                    <h2 id="manage-filters-popup-title" className="truncate text-sm font-semibold text-foreground">
-                      Manage filters
-                    </h2>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => setFiltersTrayOpen(false)}
-                    className="rounded-md p-1.5 text-muted-foreground transition-colors hover:bg-muted/80 hover:text-foreground"
-                    aria-label="Close manage filters"
-                  >
-                    <ChevronUp className="h-4 w-4" />
-                  </button>
-                </div>
-
-                <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">
-                  <div className="flex flex-col gap-4 xl:flex-row xl:flex-wrap xl:items-center">
-                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                      <div className="flex items-center gap-1.5">
-                        <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="mr-1 whitespace-nowrap text-[13px] font-medium text-muted-foreground">Req. Delivery Date</span>
+                  <p className="mb-3 text-xs font-medium text-[#6B7280] dark:text-neutral-500">Adjust date filters</p>
+                  <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-start">
+                    <div className="flex min-w-0 flex-1 flex-col gap-2">
+                      <div className="flex items-center gap-1.5 text-[13px] font-medium text-[#6B7280] dark:text-neutral-400">
+                        <Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        <span>Req. Delivery Date</span>
                       </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
+                      <div className="flex flex-wrap gap-2">
                         {periods.map((p) => (
                           <button
                             key={p.value}
                             type="button"
                             onClick={() => setPeriod(p.value)}
-                            className={selectedPeriod === p.value ? "filter-chip-active whitespace-nowrap" : "filter-chip-inactive whitespace-nowrap"}
+                            className={cn(
+                              "h-8 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium transition-colors duration-200 ease-in-out",
+                              selectedPeriod === p.value
+                                ? "border-primary/35 bg-primary/[0.08] text-[hsl(155_24%_28%)] dark:border-primary/40 dark:bg-primary/[0.12] dark:text-primary/90"
+                                : "border-neutral-200 bg-background text-[#6B7280] hover:bg-neutral-100 dark:border-border dark:text-neutral-400 dark:hover:bg-muted/80",
+                            )}
                           >
                             {p.label}
                           </button>
@@ -429,20 +375,25 @@ export default function Dashboard() {
                       </div>
                     </div>
 
-                    <div className="hidden h-6 w-px shrink-0 bg-border/60 dark:bg-white/[0.1] xl:block" />
+                    <div className="hidden h-full min-h-[2.5rem] w-px shrink-0 bg-neutral-200 sm:block dark:bg-border" />
 
-                    <div className="flex flex-col gap-2 sm:flex-row sm:flex-wrap sm:items-center">
-                      <div className="flex items-center gap-1.5">
-                        <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
-                        <span className="mr-1 whitespace-nowrap text-[13px] font-medium text-muted-foreground">SO Create Date</span>
+                    <div className="flex min-w-0 flex-1 flex-col gap-2">
+                      <div className="flex items-center gap-1.5 text-[13px] font-medium text-[#6B7280] dark:text-neutral-400">
+                        <Calendar className="h-3.5 w-3.5 shrink-0" aria-hidden />
+                        <span>SO Create Date</span>
                       </div>
-                      <div className="flex flex-wrap items-center gap-1.5">
+                      <div className="flex flex-wrap gap-2">
                         {periods.map((p) => (
                           <button
                             key={p.value}
                             type="button"
                             onClick={() => setCreationPeriod(p.value)}
-                            className={selectedCreationPeriod === p.value ? "filter-chip-active whitespace-nowrap" : "filter-chip-inactive whitespace-nowrap"}
+                            className={cn(
+                              "h-8 whitespace-nowrap rounded-md border px-2.5 text-xs font-medium transition-colors duration-200 ease-in-out",
+                              selectedCreationPeriod === p.value
+                                ? "border-primary/35 bg-primary/[0.08] text-[hsl(155_24%_28%)] dark:border-primary/40 dark:bg-primary/[0.12] dark:text-primary/90"
+                                : "border-neutral-200 bg-background text-[#6B7280] hover:bg-neutral-100 dark:border-border dark:text-neutral-400 dark:hover:bg-muted/80",
+                            )}
                           >
                             {p.label}
                           </button>
@@ -452,101 +403,100 @@ export default function Dashboard() {
                   </div>
 
                   {token ? (
-                  <div className="mt-4 flex flex-wrap items-center gap-x-4 gap-y-4 border-t border-border/40 pt-4 dark:border-white/[0.08]">
-                      <div className="flex flex-wrap items-center gap-1.5">
-                          <Popover open={favDropdownOpen} onOpenChange={setFavDropdownOpen}>
-                            <PopoverTrigger asChild>
-                              <Button
-                                variant="outline"
-                                type="button"
-                                className="h-8 gap-1.5 rounded-full border-border/60 bg-background/30 px-3 text-[13px] font-medium text-muted-foreground backdrop-blur-sm dark:border-white/[0.12] dark:bg-white/[0.06]"
-                              >
-                                <Star className="h-3.5 w-3.5 fill-yellow-500/20 text-yellow-500" />
-                                Saved Filters
-                                <ChevronDown className="h-3.5 w-3.5 opacity-50" />
-                              </Button>
-                            </PopoverTrigger>
-                            <PopoverContent
-                              align="start"
-                              side="bottom"
-                              sideOffset={6}
-                              className="z-[230] w-64 border-border/60 p-1.5 dark:border-white/[0.1]"
-                            >
-                              {favorites.length === 0 ? (
-                                <div className="px-3 py-4 text-center text-sm text-muted-foreground">No saved filters yet</div>
-                              ) : (
-                                <div className="max-h-[min(24rem,70vh)] overflow-y-auto">
-                                  {favorites.map((fav) => (
-                                    <div
-                                      key={fav.id}
-                                      className="group flex items-center justify-between gap-2 rounded-md px-1 py-0.5"
-                                    >
-                                      <button
-                                        type="button"
-                                        className="min-w-0 flex-1 truncate rounded-md px-1 py-1.5 text-left text-sm font-medium transition-colors hover:bg-accent"
-                                        onClick={() => handleApplyFavorite(fav)}
-                                      >
-                                        {fav.name}
-                                      </button>
-                                      <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-6 w-6 shrink-0 text-muted-foreground opacity-0 transition-all group-hover:opacity-100 hover:text-destructive"
-                                        onClick={(e) => handleDeleteFavorite(e, fav.id)}
-                                      >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                      </Button>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </PopoverContent>
-                          </Popover>
-
-                          {!showSaveFav ? (
+                    <div className="mt-4 flex flex-col gap-3 border-t border-neutral-200/90 pt-3 dark:border-border/80">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Popover open={favDropdownOpen} onOpenChange={setFavDropdownOpen}>
+                          <PopoverTrigger asChild>
                             <Button
-                              variant="ghost"
+                              variant="outline"
                               type="button"
-                              className="h-8 gap-1.5 rounded-full px-3 text-[13px] font-medium text-muted-foreground hover:text-foreground"
-                              onClick={() => setShowSaveFav(true)}
+                              className="h-8 gap-1.5 rounded-md border-neutral-200 bg-background px-2.5 text-xs font-medium text-[#6B7280] shadow-none hover:bg-neutral-50 dark:border-border dark:text-neutral-400 dark:hover:bg-muted/60"
                             >
-                              <Save className="h-3.5 w-3.5" />
-                              Save Current
+                              <Star className="h-3.5 w-3.5 fill-yellow-500/15 text-yellow-600/90" />
+                              Saved Filters
+                              <ChevronDown className="h-3.5 w-3.5 opacity-60" />
                             </Button>
-                          ) : (
-                            <div className="flex flex-wrap items-center gap-1.5 animate-in duration-200 slide-in-from-left-2">
-                              <Input
-                                autoFocus
-                                placeholder="Filter name..."
-                                value={newFavName}
-                                onChange={(e) => setNewFavName(e.target.value)}
-                                className="h-8 w-40 rounded-full border-border px-3 text-[13px]"
-                                onKeyDown={(e) => {
-                                  if (e.key === "Enter") handleSaveFavorite();
-                                  if (e.key === "Escape") setShowSaveFav(false);
-                                }}
-                              />
-                              <Button type="button" className="h-8 rounded-full px-3 text-[13px] font-medium" onClick={handleSaveFavorite}>
-                                Save
-                              </Button>
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                className="h-8 rounded-full px-3 text-[13px] font-medium text-muted-foreground hover:text-foreground"
-                                onClick={() => setShowSaveFav(false)}
-                              >
-                                Cancel
-                              </Button>
-                            </div>
-                          )}
-                        </div>
-                  </div>
+                          </PopoverTrigger>
+                          <PopoverContent
+                            align="start"
+                            side="bottom"
+                            sideOffset={6}
+                            className="z-50 w-64 rounded-md border border-neutral-200 p-1.5 shadow-sm dark:border-border"
+                          >
+                            {favorites.length === 0 ? (
+                              <div className="px-3 py-4 text-center text-sm text-[#6B7280]">No saved filters yet</div>
+                            ) : (
+                              <div className="max-h-[min(24rem,70vh)] overflow-y-auto">
+                                {favorites.map((fav) => (
+                                  <div
+                                    key={fav.id}
+                                    className="group flex items-center justify-between gap-2 rounded-md px-1 py-0.5"
+                                  >
+                                    <button
+                                      type="button"
+                                      className="min-w-0 flex-1 truncate rounded-md px-1 py-1.5 text-left text-sm font-medium transition-colors hover:bg-neutral-100 dark:hover:bg-muted/80"
+                                      onClick={() => handleApplyFavorite(fav)}
+                                    >
+                                      {fav.name}
+                                    </button>
+                                    <Button
+                                      variant="ghost"
+                                      size="icon"
+                                      className="h-6 w-6 shrink-0 text-[#6B7280] opacity-0 transition-all group-hover:opacity-100 hover:bg-neutral-100 hover:text-neutral-900 dark:hover:bg-muted"
+                                      onClick={(e) => handleDeleteFavorite(e, fav.id)}
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </PopoverContent>
+                        </Popover>
+
+                        {!showSaveFav ? (
+                          <Button
+                            variant="ghost"
+                            type="button"
+                            className="h-8 gap-1.5 rounded-md px-2.5 text-xs font-medium text-[#6B7280] shadow-none hover:bg-neutral-100 hover:text-neutral-800 dark:text-neutral-400 dark:hover:bg-muted/80 dark:hover:text-foreground"
+                            onClick={() => setShowSaveFav(true)}
+                          >
+                            <Save className="h-3.5 w-3.5" />
+                            Save Current
+                          </Button>
+                        ) : (
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Input
+                              autoFocus
+                              placeholder="Filter name…"
+                              value={newFavName}
+                              onChange={(e) => setNewFavName(e.target.value)}
+                              className="h-8 w-40 rounded-md border-neutral-200 px-2.5 text-xs dark:border-border"
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") handleSaveFavorite();
+                                if (e.key === "Escape") setShowSaveFav(false);
+                              }}
+                            />
+                            <Button type="button" className="h-8 rounded-md px-3 text-xs font-medium shadow-sm" onClick={handleSaveFavorite}>
+                              Save
+                            </Button>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              className="h-8 rounded-md px-2.5 text-xs font-medium text-[#6B7280] hover:bg-neutral-100 dark:hover:bg-muted/80"
+                              onClick={() => setShowSaveFav(false)}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        )}
+                      </div>
+                    </div>
                   ) : null}
                 </div>
               </div>
-            </>,
-            document.body,
-          )}
+            </div>
+          </div>
 
         <div className="animate-fade-in">
         {activeTab === "analytics" ? (

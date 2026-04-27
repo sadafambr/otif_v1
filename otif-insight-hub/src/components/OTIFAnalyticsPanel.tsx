@@ -518,9 +518,9 @@ function OTIFAnalyticsPanelInner({ orders }: OTIFAnalyticsPanelProps) {
       {/* Summary KPI cards */}
       <div className="grid grid-cols-2 gap-4 sm:grid-cols-4 lg:grid-cols-4">
         <StatCard label="Total Orders" value={overallStats.total.toLocaleString()} icon={Package} />
-        <StatCard label="Hit Rate" value={`${overallStats.hitRate}%`} icon={TrendingUp} accent="text-success" />
-        <StatCard label="Miss Rate" value={`${overallStats.missRate}%`} icon={TrendingDown} accent="text-destructive" />
-        <StatCard label="Total Miss" value={overallStats.miss.toLocaleString()} icon={TrendingDown} accent="text-destructive" />
+        <StatCard label="Hit Rate Prediction" value={`${overallStats.hitRate}%`} icon={TrendingUp} accent="text-success" />
+        <StatCard label="Miss Rate Prediction" value={`${overallStats.missRate}%`} icon={TrendingDown} accent="text-destructive" />
+        <StatCard label="Total Misses Prediction" value={overallStats.miss.toLocaleString()} icon={TrendingDown} accent="text-destructive" />
       </div>
 
       {/* OTIF Miss Overview */}
@@ -599,7 +599,7 @@ function OTIFAnalyticsPanelInner({ orders }: OTIFAnalyticsPanelProps) {
                     className={cn(
                       "space-y-0.5",
                       isExpanded && canExpand &&
-                        "miss-overview-card-scroll max-h-[min(21rem,52vh)] overflow-y-auto overflow-x-hidden pr-1",
+                        "max-h-[min(21rem,52vh)] overflow-y-auto overflow-x-hidden pr-1",
                     )}
                   >
                     {displayRows.length === 0 && (
@@ -1022,7 +1022,7 @@ function OTIFAnalyticsPanelInner({ orders }: OTIFAnalyticsPanelProps) {
 
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
-            <thead>
+            <thead className="bg-muted">
               <tr className="border-b">
                 <th className="py-2 text-left text-xs font-medium uppercase tracking-wider text-muted-foreground">{analyticsDimConfig.label}</th>
                 <th className="py-2 text-right text-xs font-medium uppercase tracking-wider text-muted-foreground">Total</th>

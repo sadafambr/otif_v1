@@ -79,7 +79,12 @@ export default function DocumentRepository() {
           Upload, manage, and preview your OTIF CSV data files
         </p>
 
-        <FileUploadZone onFileSelect={handleUpload} disabled={loading || previewLoading} isLoading={loading || previewLoading} />
+        <FileUploadZone
+          onFileSelect={handleUpload}
+          onInvalidFile={(msg) => setErrorMessage(msg)}
+          disabled={loading || previewLoading}
+          isLoading={loading || previewLoading}
+        />
 
         {(loading || previewLoading) && (
           <div className="mt-4 h-1 w-full overflow-hidden rounded-full bg-muted">

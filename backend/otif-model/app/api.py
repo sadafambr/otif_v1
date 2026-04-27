@@ -689,7 +689,20 @@ async def admin_custom_predict(file: UploadFile = File(...)) -> dict:
     """
     Minimal batch prediction endpoint: applies the latest model
     to an uploaded CSV/Excel file and returns batch-level counts.
+    Only accepts .csv, .xlsx, or .xlsb files.
     """
+    # Validate file extension upfront
+    ALLOWED_EXTENSIONS = (".csv", ".xlsx", ".xlsb")
+    filename_lower = (file.filename or "").lower()
+    if not any(filename_lower.endswith(ext) for ext in ALLOWED_EXTENSIONS):
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Unsupported file type \"{file.filename}\". "
+                "Please upload a .csv, .xlsx, or .xlsb file."
+            ),
+        )
+
     config = di.load_config()
     models_root = Path(config["paths"]["models"])
     month_dirs = sorted([d.name for d in models_root.iterdir() if d.is_dir()])
@@ -703,7 +716,7 @@ async def admin_custom_predict(file: UploadFile = File(...)) -> dict:
 
     contents = await file.read()
     try:
-        if file.filename and file.filename.lower().endswith(".csv"):
+        if filename_lower.endswith(".csv"):
             from io import StringIO
             df_input = pd.read_csv(StringIO(contents.decode("utf-8")))
         else:

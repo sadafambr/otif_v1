@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useLayoutEffect, useRef, useCallback, memo, useDeferredValue } from "react";
-import { Check, Filter, ListChecks, ListX, Trash2 } from "lucide-react";
+import { Check, Filter, ListChecks, ListX, Trash2, X } from "lucide-react";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
@@ -123,23 +123,22 @@ export const ColumnFilterCheckbox = memo(function ColumnFilterCheckbox({
         "data-[state=open]:bg-muted/65 data-[state=open]:opacity-100 data-[state=open]:text-foreground",
     );
 
+    const triggerBtnClass = cn(triggerClassName ?? defaultTriggerClass, isActive && (showLabel ? "pr-6" : "pr-5"));
+
     return (
-        <Popover open={open} onOpenChange={setOpen}>
-            <PopoverTrigger asChild>
-                <button
-                    type="button"
-                    title={`Filter ${label}`}
-                    className={triggerClassName ?? defaultTriggerClass}
-                >
-                    <Filter className={showLabel ? "h-3 w-3" : "h-2 w-2"} strokeWidth={2.5} />
-                    {showLabel && <span>{label}</span>}
-                    {showLabel && isActive && (
-                        <span className="ml-0.5 rounded bg-primary/20 px-1 py-0.5 text-[10px] font-bold text-primary">
-                            {selected.size}
-                        </span>
-                    )}
-                </button>
-            </PopoverTrigger>
+        <div className="group/filter-clear relative inline-flex max-w-full">
+            <Popover open={open} onOpenChange={setOpen}>
+                <PopoverTrigger asChild>
+                    <button type="button" title={`Filter ${label}`} className={triggerBtnClass}>
+                        <Filter className={showLabel ? "h-3 w-3" : "h-2 w-2"} strokeWidth={2.5} />
+                        {showLabel && <span className="min-w-0 truncate">{label}</span>}
+                        {showLabel && isActive && (
+                            <span className="ml-0.5 shrink-0 rounded bg-primary/20 px-1 py-0.5 text-[10px] font-bold text-primary">
+                                {selected.size}
+                            </span>
+                        )}
+                    </button>
+                </PopoverTrigger>
             <PopoverContent
                 align="start"
                 side="bottom"
@@ -243,6 +242,27 @@ export const ColumnFilterCheckbox = memo(function ColumnFilterCheckbox({
                     </div>
                 </div>
             </PopoverContent>
-        </Popover>
+            </Popover>
+            {isActive && (
+                <button
+                    type="button"
+                    aria-label={`Remove ${label} filter`}
+                    title={`Remove ${label} filter`}
+                    className={cn(
+                        "absolute right-0.5 top-1/2 z-[1] -translate-y-1/2 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity duration-150",
+                        "hover:bg-destructive/15 hover:text-destructive",
+                        "pointer-events-none group-hover/filter-clear:pointer-events-auto group-hover/filter-clear:opacity-100",
+                        "group-focus-within/filter-clear:pointer-events-auto group-focus-within/filter-clear:opacity-100",
+                        "focus-visible:pointer-events-auto focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50",
+                    )}
+                    onClick={() => {
+                        onChange(new Set());
+                        setOpen(false);
+                    }}
+                >
+                    <X className="h-3 w-3" strokeWidth={2.5} />
+                </button>
+            )}
+        </div>
     );
 });

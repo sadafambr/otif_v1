@@ -1033,7 +1033,7 @@ export function OrderTable({ orders, rawHeaders, onOrderClick }: OrderTableProps
                       if (fromKey) reorderColumns(fromKey, key);
                       draggingKeyRef.current = null;
                     }}
-                    className="group/header relative sticky top-0 z-10 border-y border-border/60 bg-muted/40 py-1.5 pl-2 pr-3 text-left align-middle dark:bg-muted/30 select-none"
+                    className="group/header relative sticky top-0 z-10 border-y border-border/60 bg-muted py-1.5 pl-2 pr-3 text-left align-middle select-none"
                     style={width ? { width: `${width}px`, minWidth: `${width}px`, maxWidth: `${width}px` } : undefined}
                     title={`${label} — Drag to reorder; drag right edge to resize.`}
                   >

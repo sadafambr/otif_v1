@@ -2,16 +2,50 @@ import { useCallback, useState, useRef } from "react";
 import { Upload } from "lucide-react";
 import { cn } from "@/lib/utils";
 
+const ALLOWED_EXTENSIONS = [".csv", ".xlsx", ".xlsb"];
+const ALLOWED_MIME_TYPES = [
+  "text/csv",
+  "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", // .xlsx
+  "application/vnd.ms-excel",                                           // .xls / .xlsb
+];
+
+function isAllowedFile(file: File): boolean {
+  const name = file.name.toLowerCase();
+  const hasAllowedExtension = ALLOWED_EXTENSIONS.some((ext) => name.endsWith(ext));
+  const hasAllowedMime = !file.type || ALLOWED_MIME_TYPES.includes(file.type);
+  return hasAllowedExtension && hasAllowedMime;
+}
+
 interface FileUploadZoneProps {
   onFileSelect: (file: File) => void;
+  onInvalidFile?: (message: string) => void;
   accept?: string;
   disabled?: boolean;
   isLoading?: boolean;
 }
 
-export function FileUploadZone({ onFileSelect, accept = ".csv", disabled, isLoading }: FileUploadZoneProps) {
+export function FileUploadZone({
+  onFileSelect,
+  onInvalidFile,
+  accept = ".csv,.xlsx,.xlsb",
+  disabled,
+  isLoading,
+}: FileUploadZoneProps) {
   const [isDragOver, setIsDragOver] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const handleFile = (file: File) => {
+    if (!isAllowedFile(file)) {
+      const msg = `Unsupported file type "${file.name}". Please upload a .csv, .xlsx, or .xlsb file.`;
+      if (onInvalidFile) {
+        onInvalidFile(msg);
+      } else {
+        alert(msg);
+      }
+      return;
+    }
+    onFileSelect(file);
+  };
 
   const handleDrop = useCallback(
     (e: React.DragEvent) => {
@@ -19,9 +53,10 @@ export function FileUploadZone({ onFileSelect, accept = ".csv", disabled, isLoad
       setIsDragOver(false);
       if (disabled) return;
       const file = e.dataTransfer.files[0];
-      if (file) onFileSelect(file);
+      if (file) handleFile(file);
     },
-    [onFileSelect, disabled]
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [onFileSelect, onInvalidFile, disabled]
   );
 
   const handleDragOver = useCallback((e: React.DragEvent) => {
@@ -37,7 +72,7 @@ export function FileUploadZone({ onFileSelect, accept = ".csv", disabled, isLoad
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
-    if (file) onFileSelect(file);
+    if (file) handleFile(file);
     e.target.value = "";
   };
 
@@ -57,7 +92,7 @@ export function FileUploadZone({ onFileSelect, accept = ".csv", disabled, isLoad
         <Upload className="h-6 w-6 animate-pulse" />
       </div>
       <h3 className="mb-1 text-lg font-semibold text-foreground">
-        {isLoading ? "Uploading and scanning CSV..." : "Upload OTIF CSV"}
+        {isLoading ? "Uploading and scanning file..." : "Upload OTIF Data File"}
       </h3>
       <p className="text-center text-sm text-muted-foreground">
         {isLoading ? (
@@ -68,9 +103,9 @@ export function FileUploadZone({ onFileSelect, accept = ".csv", disabled, isLoad
           </>
         ) : (
           <>
-            Drag and drop your CSV file here, or click to browse.
+            Drag and drop your file here, or click to browse.
             <br />
-            Compatible with standard OTIF prediction export format.
+            <span className="font-medium text-foreground/70">Accepted formats: .csv, .xlsx, .xlsb</span>
           </>
         )}
       </p>
