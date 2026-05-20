@@ -63,7 +63,14 @@ except Exception as _exc:
     _genai_FEATURE_NAME_MAP = None
     _genai_import_error = str(_exc)
 
+if _genai_import_error:
+    logger.warning("otif-genai not available: %s", _genai_import_error)
+else:
+    logger.info("otif-genai LLM explainer loaded")
+
 # --- Daily in-memory cache for GenAI order summaries ---
+# Bump _GENAI_CACHE_VERSION when explainer output format/model changes.
+_GENAI_CACHE_VERSION = "v2"
 # Key: salesOrder str → Value: (date_str, genai_summary, shap_one_liner)
 _summary_cache: dict[str, tuple[str, Optional[str], Optional[str]]] = {}
 
@@ -500,20 +507,27 @@ def summarize_order(req: OrderSummaryRequest) -> OrderSummaryResponse:
 
     drivers = _generate_risk_drivers(req, prob_miss)
 
+    # --- SHAP one-liner: always built from drivers, never from GenAI error ---
+    driver_names = [d.name for d in drivers[:3] if d.name]
+    shap_one_liner: Optional[str] = (
+        "Key drivers: " + ", ".join(driver_names) if driver_names else None
+    )
+
     # --- GenAI explanation (with daily cache) ---
     genai_summary: Optional[str] = None
-    shap_one_liner: Optional[str] = None
     today_str = datetime.utcnow().strftime("%Y-%m-%d")
-    cache_key = req.salesOrder
+    cache_key = f"{req.salesOrder}:{_GENAI_CACHE_VERSION}"
 
-    # Check cache: reuse if generated today
+    # Check cache: reuse if generated today (ignore stale/error entries)
     if cache_key in _summary_cache:
         cached_date, cached_summary, cached_shap = _summary_cache[cache_key]
-        if cached_date == today_str:
+        if cached_date == today_str and cached_summary:
             genai_summary = cached_summary
-            shap_one_liner = cached_shap
+            # Only use cached shap if it's a real value, not an old error string
+            if cached_shap and not cached_shap.startswith("GenAI unavailable"):
+                shap_one_liner = cached_shap
 
-    # If not cached, call GenAI
+    # If not cached, attempt GenAI
     if genai_summary is None and _genai_summarize_reason is not None:
         try:
             row_data: dict[str, Any] = {
@@ -539,21 +553,36 @@ def summarize_order(req: OrderSummaryRequest) -> OrderSummaryResponse:
                 row_data["top3_value"] = req.top3Value
                 row_data["top3_shap"] = req.top3Shap
 
-            drv_tuples = [(d.name, d.value, d.shapValue) for d in drivers]
+            # Raw SHAP keys for the LLM prompt (human labels are only for the UI drivers list)
+            drv_tuples: list[tuple[str, Any, Any]] = []
+            for feat, val, shap_val in [
+                (req.top1Feature, req.top1Value, req.top1Shap),
+                (req.top2Feature, req.top2Value, req.top2Shap),
+                (req.top3Feature, req.top3Value, req.top3Shap),
+            ]:
+                if feat:
+                    drv_tuples.append((feat, val, shap_val))
+            if not drv_tuples:
+                drv_tuples = [(d.name, d.value, d.shapValue) for d in drivers]
+
             pred_int = 1 if prediction == "Hit" else 0
 
-            genai_summary, shap_one_liner = _genai_summarize_reason(
+            genai_summary, genai_shap = _genai_summarize_reason(
                 prediction=pred_int,
                 prob_hit=prob_hit,
                 prob_miss=prob_miss,
                 drivers=drv_tuples,
                 row=row_data,
             )
+            # If GenAI also returned a shap one-liner, prefer it
+            if genai_shap and not genai_shap.startswith("GenAI unavailable"):
+                shap_one_liner = genai_shap
             # Store in cache
             _summary_cache[cache_key] = (today_str, genai_summary, shap_one_liner)
         except Exception as exc:
+            logger.warning("GenAI explanation failed, using driver fallback", extra={"error": str(exc)})
             genai_summary = None
-            shap_one_liner = f"GenAI unavailable: {exc}"
+            # shap_one_liner already set from drivers above — nothing to do
 
     return OrderSummaryResponse(
         probHit=prob_hit,

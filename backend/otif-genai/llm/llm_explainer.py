@@ -4,7 +4,8 @@ from pathlib import Path
 from typing import Any, Mapping, Optional, Sequence, Tuple
 
 from dotenv import load_dotenv
-from openai import OpenAI
+from google import genai
+from google.genai import types
 
 from config.column_definitions import COLUMN_DEFINITIONS
 
@@ -12,7 +13,19 @@ from config.column_definitions import COLUMN_DEFINITIONS
 _DOTENV_PATH = Path(__file__).resolve().parents[1] / ".env"
 load_dotenv(dotenv_path=_DOTENV_PATH, override=False)
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+
+# Lazy client — created on first use so a bad key doesn't break the import
+_client: Optional[genai.Client] = None
+
+def _get_client() -> genai.Client:
+    global _client
+    if _client is None:
+        api_key = os.getenv("GEMINI_API_KEY")
+        if not api_key:
+            raise RuntimeError("GEMINI_API_KEY is not set. Set it in environment or otif-genai/.env.")
+        _client = genai.Client(api_key=api_key)
+    return _client
 
 FEATURE_NAME_MAP = {
     "f_so_to_rdd_days": {"business_name": "Order-to-Delivery Window", "technical_name": "SO to RDD Lead Days"},
@@ -182,25 +195,60 @@ Recommended actions:
     return prompt
 
 
-def generate_explanation(data):
-
+def generate_explanation(data: Mapping[str, Any]) -> str:
     prompt = build_prompt(data)
 
-    if not os.getenv("OPENAI_API_KEY"):
-        raise RuntimeError("OPENAI_API_KEY is not set. Set it in environment or otif-genai/.env.")
-
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "system", "content": "You are an expert supply chain analyst. Your task is to explain the OTIF prediction for a single order in a concise, business-friendly paragraph. Your response must be a maximum of 100 tokens and exactly 3-4 sentences. Do not provide recommendations for UI/dashboards, just explain the risk drivers for this specific order."},
-            {"role": "user", "content": prompt}
-        ],
-        temperature=0.2,
-        max_tokens=100,
-        timeout=15.0  # Prevent "stuck" loading states
+    system_instruction = (
+        "You are an expert supply chain analyst explaining OTIF predictions for a single order. "
+        "Follow the OUTPUT FORMAT in the user prompt exactly. "
+        "Use plain supply-chain language, not technical feature codes. "
+        "Keep each bullet to one short sentence."
     )
 
-    return response.choices[0].message.content
+    client = _get_client()
+    response = client.models.generate_content(
+        model=GEMINI_MODEL,
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_instruction,
+            temperature=0.2,
+            max_output_tokens=1024,
+            thinking_config=types.ThinkingConfig(thinking_budget=0),
+        ),
+    )
+
+    return (response.text or "").strip()
+
+
+def _humanize_feature_name(raw_feat: str) -> str:
+    key_lower = raw_feat.strip().lower()
+    if key_lower in FEATURE_NAME_MAP:
+        return FEATURE_NAME_MAP[key_lower]["business_name"]
+    for k, v in FEATURE_NAME_MAP.items():
+        k_lower = k.lower()
+        if k_lower == key_lower or k_lower == f"f_{key_lower}" or f"f_{k_lower}" == key_lower:
+            return v["business_name"]
+    return raw_feat.removeprefix("f_").replace("_", " ").title()
+
+
+def _fallback_explanation(data: Mapping[str, Any], drivers: Optional[Sequence[Tuple[str, Any, Any]]]) -> str:
+    predicted_label = int(data.get("predicted_label", 0))
+    prediction = "HIT" if predicted_label == 1 else "MISS"
+    prob_miss = data.get("prob_miss", "")
+    risk = "Low" if prediction == "HIT" else "High"
+    bullets = []
+    for feat, _, _ in (list(drivers)[:3] if drivers else []):
+        bullets.append(f"- {_humanize_feature_name(str(feat))} influenced this {prediction} prediction.")
+    if not bullets:
+        bullets.append("- SHAP drivers were not available for this order.")
+    return (
+        f"Risk: {risk}\n\n"
+        f"Key risk signals:\n"
+        + "\n".join(bullets)
+        + f"\n\nRecommended actions:\n"
+        f"- Review material availability against the requested delivery date.\n"
+        f"- Monitor plant and customer historical OTIF performance (miss probability {prob_miss}%)."
+    )
 
 
 def summarize_reason(
@@ -227,11 +275,16 @@ def summarize_reason(
         drivers = inferred
 
     for idx, (feat, val, shap_val) in enumerate(list(drivers)[:3], start=1):
-        data[f"top{idx}_feature"] = str(feat)
+        raw_key = str(feat)
+        data[f"raw_top{idx}_feature"] = raw_key
+        data[f"top{idx}_feature"] = raw_key
         data[f"top{idx}_value"] = val
         data[f"top{idx}_shap"] = shap_val
 
-    full_text = generate_explanation(data) or ""
+    try:
+        full_text = generate_explanation(data) or ""
+    except Exception:
+        full_text = _fallback_explanation(data, drivers)
 
     lines = full_text.splitlines()
     shap_one_liner = ""
@@ -246,12 +299,7 @@ def summarize_reason(
             break
 
     if not shap_one_liner:
-        driver_bits = []
-        for feat, _, shap_val in (list(drivers)[:3] if drivers else []):
-            if shap_val in (None, ""):
-                driver_bits.append(str(feat))
-            else:
-                driver_bits.append(str(feat))
+        driver_bits = [_humanize_feature_name(str(feat)) for feat, _, _ in (list(drivers)[:3] if drivers else [])]
         shap_one_liner = "Key drivers: " + ", ".join(driver_bits) if driver_bits else "Key drivers: (not available)"
     
     # Remove SHAP numerical values from shap_one_liner (e.g., remove "(+2.848)" or " (+2.848)")
