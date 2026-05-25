@@ -1,5 +1,6 @@
 import { TriangleAlert, Sparkles, BarChart3, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { StructuredAiExplanation } from "@/components/StructuredAiExplanation";
 import type { OrderDetail } from "@/types/otif";
 
 interface OrderDetailModalProps {
@@ -77,9 +78,7 @@ export function OrderDetailModal({ detail, loading, onClose }: OrderDetailModalP
                     <Sparkles className="h-4 w-4 text-primary" />
                     <h4 className="text-sm font-semibold text-foreground">AI Explanation</h4>
                   </div>
-                  <p className="whitespace-pre-line text-sm leading-relaxed text-foreground/90">
-                    {detail.genaiSummary}
-                  </p>
+                  <StructuredAiExplanation text={detail.genaiSummary} />
                 </div>
               )}
 

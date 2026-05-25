@@ -53,15 +53,29 @@ const COLUMN_DISPLAY_NAMES: Record<string, string> = {
     "top3_feature": "Top Risk Factor 3",
     "top3_value": "Risk Factor 3 Value",
     "top3_shap": "Risk Factor 3 Impact",
+    "rule_applied": "Rule Applied",
+    "combined_otif": "Model Output (Combined OTIF)",
 };
+
+/** Labels from the uploaded file (Excel/CSV), keyed by normalized column key. */
+let dynamicHeaderLabels: Record<string, string> = {};
+
+export function setDynamicHeaderLabels(labels: Record<string, string>) {
+    dynamicHeaderLabels = labels;
+}
+
+export function clearDynamicHeaderLabels() {
+    dynamicHeaderLabels = {};
+}
 
 /**
  * Get a business-friendly display name for a raw CSV header.
  * Falls back to the raw header for unknown columns.
  */
 export function getDisplayName(rawHeader: string): string {
+    if (dynamicHeaderLabels[rawHeader]) return dynamicHeaderLabels[rawHeader];
     const key = rawHeader.trim().toLowerCase();
-    return COLUMN_DISPLAY_NAMES[key] || rawHeader;
+    return COLUMN_DISPLAY_NAMES[key] || dynamicHeaderLabels[key] || rawHeader;
 }
 
 /**
@@ -76,6 +90,7 @@ export const DEFAULT_COLUMN_KEYS = [
     "material",
     "plant",
     "requested delivery date",
+    "rule_applied",
     "leadTime",
     "riskScore",
     "status",
@@ -103,6 +118,7 @@ export function resolveDefaultColumn(defaultKey: string, availableHeaders: strin
         "riskscore": ["risk_score", "prob_miss", "miss probability"],
         "status": ["otif_hit/miss", "otif_hit", "prediction"],
         "risksignals": ["risk signals"],
+        "rule_applied": ["rule applied", "Rule Applied", "RULE_APPLIED"],
         "top1_feature": [],
     };
 

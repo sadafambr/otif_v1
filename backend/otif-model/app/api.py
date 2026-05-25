@@ -70,7 +70,7 @@ else:
 
 # --- Daily in-memory cache for GenAI order summaries ---
 # Bump _GENAI_CACHE_VERSION when explainer output format/model changes.
-_GENAI_CACHE_VERSION = "v2"
+_GENAI_CACHE_VERSION = "v4"
 # Key: salesOrder str → Value: (date_str, genai_summary, shap_one_liner)
 _summary_cache: dict[str, tuple[str, Optional[str], Optional[str]]] = {}
 
@@ -198,6 +198,8 @@ class OrderSummaryRequest(BaseModel):
     top3Feature: Optional[str] = None
     top3Value: Optional[str] = None
     top3Shap: Optional[float] = None
+    ruleApplied: Optional[str] = None
+    combinedOtif: Optional[str] = None
 
 
 class RiskDriver(BaseModel):
@@ -539,6 +541,10 @@ def summarize_order(req: OrderSummaryRequest) -> OrderSummaryResponse:
                 "prob_hit": prob_hit,
                 "prob_miss": prob_miss,
             }
+            if req.ruleApplied:
+                row_data["rule_applied"] = req.ruleApplied.strip()
+            if req.combinedOtif:
+                row_data["combined_otif"] = req.combinedOtif.strip()
             # Pass real SHAP features to the LLM prompt when available
             if req.top1Feature:
                 row_data["top1_feature"] = req.top1Feature

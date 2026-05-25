@@ -10,7 +10,7 @@ import type { OTIFFile } from "@/types/otif";
 
 export default function DocumentRepository() {
   const { files, loading, uploadFile, deleteFile } = useFiles();
-  const { records, loading: previewLoading, parseCSV } = useCSVPreview();
+  const { records, loading: previewLoading, parseSpreadsheet } = useCSVPreview();
   const navigate = useNavigate();
 
   const [previewFile, setPreviewFile] = useState<OTIFFile | null>(null);
@@ -23,7 +23,7 @@ export default function DocumentRepository() {
     try {
       const otifFile = await uploadFile(file);
       if (!otifFile) {
-        setErrorMessage("File could not be uploaded. Please try again with a valid OTIF CSV export.");
+        setErrorMessage("File could not be uploaded. Please try again with a valid OTIF CSV or Excel export.");
         return;
       }
       rawFilesRef.current.set(otifFile.id, file);
@@ -40,9 +40,11 @@ export default function DocumentRepository() {
       setErrorMessage("Unable to find the original file for preview. Please re-upload the dataset.");
       return;
     }
-    const parsed = await parseCSV(rawFile);
+    const { records: parsed } = await parseSpreadsheet(rawFile);
     if (!parsed || parsed.length === 0) {
-      setErrorMessage("The selected file could not be parsed. Ensure it is a valid OTIF CSV with at least one data row.");
+      setErrorMessage(
+        "The selected file could not be parsed. Ensure it is a valid OTIF CSV or Excel file with a header row and at least one data row.",
+      );
       return;
     }
     setPreviewFile(otifFile);
@@ -55,14 +57,13 @@ export default function DocumentRepository() {
       setErrorMessage("Unable to find the original file. Please re-upload the dataset before loading it to the dashboard.");
       return;
     }
-    const parsed = await parseCSV(rawFile);
+    const { records: parsed, columnKeys, headerLabels } = await parseSpreadsheet(rawFile);
     if (!parsed || parsed.length === 0) {
       setErrorMessage("No valid records were found in this file. Please confirm the OTIF export format and try again.");
       return;
     }
 
-    const rawHeaders = parsed[0] ? Object.keys(parsed[0].rawData) : [];
-    setDashboardData(parsed, otifFile.filename, rawHeaders);
+    setDashboardData(parsed, otifFile.filename, columnKeys, headerLabels);
     navigate("/dashboard");
   };
 

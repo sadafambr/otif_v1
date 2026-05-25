@@ -1,4 +1,5 @@
 import type { OTIFRecord } from "@/types/otif";
+import { pickCombinedOtif, pickRuleApplied } from "@/lib/ruleApplied";
 
 export const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "http://localhost:8000";
 
@@ -91,7 +92,7 @@ export interface OrderSummaryResponse {
 export async function fetchOrderSummary(order: OTIFRecord, token?: string): Promise<OrderSummaryResponse> {
   // --- sessionStorage daily cache ---
   const today = new Date().toISOString().slice(0, 10); // "YYYY-MM-DD"
-  const cacheKey = `order_summary_${order.salesOrder}_${today}_v7_genai`;
+  const cacheKey = `order_summary_${order.salesOrder}_${today}_v9_rules`;
 
   try {
     const cached = sessionStorage.getItem(cacheKey);
@@ -128,6 +129,8 @@ export async function fetchOrderSummary(order: OTIFRecord, token?: string): Prom
       top3Feature: order.top3Feature,
       top3Value: order.top3Value,
       top3Shap: order.top3Shap,
+      ruleApplied: pickRuleApplied(order.rawData) || undefined,
+      combinedOtif: pickCombinedOtif(order.rawData) || undefined,
     }),
   });
 
