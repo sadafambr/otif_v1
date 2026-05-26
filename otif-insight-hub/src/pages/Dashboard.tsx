@@ -62,6 +62,7 @@ export default function Dashboard() {
   const [filtersTrayOpen, setFiltersTrayOpen] = useState(false);
   const [orderTablePageSize, setOrderTablePageSize] = useState(25);
   const [orderTableDrill, setOrderTableDrill] = useState<OrderTableDrillPayload | null>(null);
+  const [tableFilteredOrders, setTableFilteredOrders] = useState<OTIFRecord[] | null>(null);
   /** Only one OTIF distribution HoverCard open at a time (avoids the first popover sticking when moving to another card). */
   const [distributionPopover, setDistributionPopover] = useState<"miss" | "hit" | "rate" | null>(null);
   const handleDistributionPopoverChange = useCallback((key: "miss" | "hit" | "rate", open: boolean) => {
@@ -249,10 +250,10 @@ export default function Dashboard() {
   const handleExportSummary = () => {
     if (!summary) return;
     const data = {
-      "Total Orders": filteredSummary?.totalOrders ?? summary.totalOrders,
-      "OTIF Miss": filteredSummary?.otifMiss ?? summary.otifMiss,
-      "OTIF Hit": filteredSummary?.otifHit ?? summary.otifHit,
-      "Miss Rate": `${filteredSummary?.missRate ?? summary.missRate}%`,
+      "Total Orders": displaySummary.totalOrders,
+      "OTIF Miss": displaySummary.otifMiss,
+      "OTIF Hit": displaySummary.otifHit,
+      "Miss Rate": `${displaySummary.missRate}%`,
       "Timestamp": new Date(summary.lastUpdated).toISOString(),
       "Req. Delivery Date": selectedPeriod,
       "SO Create Date": selectedCreationPeriod,
@@ -311,7 +312,22 @@ export default function Dashboard() {
     );
   }
 
-  const displaySummary = filteredSummary ?? summary;
+  const displaySummary = (() => {
+    const ordersToSum = tableFilteredOrders ?? filteredOrders;
+    const total = ordersToSum.length;
+    let miss = 0;
+    for (const o of ordersToSum) {
+      if (o.status === "Miss") miss++;
+    }
+    const hit = total - miss;
+    return {
+      ...summary,
+      totalOrders: total,
+      otifMiss: miss,
+      otifHit: hit,
+      missRate: total > 0 ? Math.round((miss / total) * 1000) / 10 : 0,
+    };
+  })();
   const totalN = displaySummary.totalOrders;
   const missN = displaySummary.otifMiss;
   const hitN = displaySummary.otifHit;
@@ -325,7 +341,6 @@ export default function Dashboard() {
           <div>
             <p className="text-sm text-muted-foreground">{greeting}</p>
             <h1 className="text-2xl font-bold text-foreground">OTIF Risk Dashboard</h1>
-            <p className="text-sm text-muted-foreground">Supply Chain Performance & Risk Insights</p>
           </div>
           <div className="flex items-center gap-3">
             <span className="text-xs text-muted-foreground">
@@ -674,6 +689,7 @@ export default function Dashboard() {
               onPageSizeChange={setOrderTablePageSize}
               drillFilter={orderTableDrill}
               onDrillFilterApplied={handleOrderTableDrillApplied}
+              onFilteredOrdersChange={setTableFilteredOrders}
             />
 
             {/* Order Detail Modal */}
@@ -697,7 +713,7 @@ export default function Dashboard() {
                 }
               >
                 <OTIFAnalyticsPanel
-                  orders={filteredOrders}
+                  orders={tableFilteredOrders ?? filteredOrders}
                   onDrillToOrderTable={(payload) => {
                     setActiveTab("dashboard");
                     setOrderTableDrill(payload);

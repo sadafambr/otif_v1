@@ -35,6 +35,9 @@ export function mapSpreadsheetToOtifRecords(table: SpreadsheetTable): OTIFRecord
     };
 
     const rawStatus = getAny(
+      "combined_otif",
+      "combined otif",
+      "combinedotif",
       "otif_hit/miss",
       "otif_hit",
       "status",
@@ -70,9 +73,7 @@ export function mapSpreadsheetToOtifRecords(table: SpreadsheetTable): OTIFRecord
     );
 
     let status: "Hit" | "Miss";
-    if (probHit !== null && probMiss !== null) {
-      status = probHit >= probMiss ? "Hit" : "Miss";
-    } else if (
+    if (
       normalizedStatus.includes("miss") ||
       normalizedStatus.includes("late") ||
       normalizedStatus === "0" ||
@@ -88,6 +89,8 @@ export function mapSpreadsheetToOtifRecords(table: SpreadsheetTable): OTIFRecord
       normalizedStatus === "true"
     ) {
       status = "Hit";
+    } else if (probHit !== null && probMiss !== null) {
+      status = probHit >= probMiss ? "Hit" : "Miss";
     } else {
       status = "Hit";
     }

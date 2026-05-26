@@ -23,6 +23,7 @@ const COLUMN_DISPLAY_NAMES: Record<string, string> = {
     "requested delivery date": "Requested Delivery Date",
     "csr": "Customer Service Rep",
     "customer_pickup": "Customer Pickup",
+    "legacy firm": "Legacy Firm",
     "otif_hit/miss": "OTIF Status",
     "overdeliv_tolerance_otif": "Overdelivery Tolerance",
     "underdel_tolerance_otif": "Underdelivery Tolerance",
@@ -45,16 +46,30 @@ const COLUMN_DISPLAY_NAMES: Record<string, string> = {
     "prob_miss": "Miss Probability",
     "predicted_label": "Predicted Label",
     "top1_feature": "Top Risk Factor 1",
+    "top2_feature": "Top Risk Factor 2",
+    "top3_feature": "Top Risk Factor 3",
     "top1_value": "Risk Factor 1 Value",
     "top1_shap": "Risk Factor 1 Impact",
-    "top2_feature": "Top Risk Factor 2",
     "top2_value": "Risk Factor 2 Value",
     "top2_shap": "Risk Factor 2 Impact",
-    "top3_feature": "Top Risk Factor 3",
     "top3_value": "Risk Factor 3 Value",
     "top3_shap": "Risk Factor 3 Impact",
     "rule_applied": "Rule Applied",
     "combined_otif": "Model Output (Combined OTIF)",
+    "sales order_x": "Sales Order",
+    "so line_x": "SO Line Item",
+    "delivery_date": "Delivery Date",
+    "ship_to": "Ship-To Party",
+    "plant region": "Plant Region",
+    "routedays": "Route Days",
+    "confirmed_quantity_in_base_uom": "Confirmed Qty (Base UOM)",
+    "ordered_in_base_uom": "Ordered in Base UOM",
+    "incoterms_x": "Incoterms",
+    "act_goods_mvnt_date": "Actual Goods Movement Date",
+    "pland gds mvmnt date_otif_x": "Planned Goods Movement Date",
+    "total_del": "Total Delivery",
+    "mat_avl_date_otif": "Material Availability Date",
+    "mad_gap_days": "MAD Gap Days",
 };
 
 /** Labels from the uploaded file (Excel/CSV), keyed by normalized column key. */
@@ -84,6 +99,7 @@ export function getDisplayName(rawHeader: string): string {
  */
 export const DEFAULT_COLUMN_KEYS = [
     "sales order",
+    "so line",
     "so create date",
     "customer name",
     "division of business name",
@@ -94,7 +110,8 @@ export const DEFAULT_COLUMN_KEYS = [
     "leadTime",
     "riskScore",
     "status",
-    "riskSignals"
+    "riskSignals",
+    "base_uom"
 ];
 
 /**
@@ -109,17 +126,17 @@ export function resolveDefaultColumn(defaultKey: string, availableHeaders: strin
 
     // Alias maps for common variations
     const aliases: Record<string, string[]> = {
-        "sales order": ["sales_order", "salesorder", "order"],
+        "sales order": ["sales_order", "salesorder", "order", "sales order_x", "sales_order_x"],
         "customer name": ["customer", "customer_name", "ship-to name", "ship to name"],
         "material": ["material id", "material code", "material_code"],
         "plant": ["plant name"],
-        "requested delivery date": ["req_delivery", "requested_delivery", "requested_delivery_date", "req. deliv. date", "req delivery date"],
+        "requested delivery date": ["req_delivery", "requested_delivery", "requested_delivery_date", "req. deliv. date", "req delivery date", "delivery_date"],
         "so create date": ["so_create_date", "order date", "order_date", "sales order date"],
         "riskscore": ["risk_score", "prob_miss", "miss probability"],
-        "status": ["otif_hit/miss", "otif_hit", "prediction"],
-        "risksignals": ["risk signals"],
+        "status": ["combined_otif", "combined otif", "combinedotif", "otif_hit/miss", "otif_hit", "prediction"],
+        "risksignals": ["risk signals", "top1_feature"],
         "rule_applied": ["rule applied", "Rule Applied", "RULE_APPLIED"],
-        "top1_feature": [],
+        "leadtime": ["lead_time", "leadtime", "mad_gap_days", "mad gap days", "gap days", "routedays"],
     };
 
     const candidates = aliases[lower] || [];

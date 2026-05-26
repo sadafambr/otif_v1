@@ -1,5 +1,5 @@
 import { useState, useMemo, useEffect, useRef, useCallback, useDeferredValue, startTransition } from "react";
-import { Search, Download, ArrowUpDown, ChevronDown, Columns2, ChevronUp, ArrowDown } from "lucide-react";
+import { Search, Download, ArrowUpDown, ChevronDown, Columns2, ChevronUp, ArrowDown, Filter } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { ColumnFilterCheckbox } from "@/components/ColumnFilterCheckbox";
@@ -10,6 +10,7 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { RotateCcw } from "lucide-react";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { getDisplayName, DEFAULT_COLUMN_KEYS, resolveDefaultColumn } from "@/lib/columnMapping";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 
 /** Raw column keys that represent sales order / SO id (numeric IDs → checkbox, not range). */
 function isSalesOrderColumnKey(key: string, availableColumnKeys: string[]): boolean {
@@ -42,6 +43,125 @@ function isRiskSignalsColumnKey(key: string): boolean {
   const k = key.trim().toLowerCase();
   return k === "risksignals" || k === "risk signals" || k === "risk_signals";
 }
+
+function isDateColumnKey(key: string): boolean {
+  const k = key.trim().toLowerCase();
+  return k.includes("date") || k.includes("rdd") || k.includes("delivery");
+}
+
+function parseDateRobust(str: string): Date | null {
+  if (!str) return null;
+  const cleaned = str.trim();
+
+  // Try parsing by splitting first to handle 2-digit years and diverse delimiters
+  const parts = cleaned.split(/[\/\-\.\s]/);
+  if (parts.length >= 3) {
+    let p0 = parseInt(parts[0], 10);
+    let p1 = parseInt(parts[1], 10);
+    let p2 = parseInt(parts[2], 10);
+
+    if (!isNaN(p0) && !isNaN(p1) && !isNaN(p2)) {
+      let year = 0;
+      let month = 0;
+      let day = 0;
+
+      // Detect format
+      if (p0 > 1000) {
+        // YYYY-MM-DD
+        year = p0;
+        month = p1 - 1;
+        day = p2;
+      } else if (p2 > 1000) {
+        // MM/DD/YYYY or DD/MM/YYYY
+        year = p2;
+        if (p0 > 12) {
+          month = p1 - 1;
+          day = p0;
+        } else if (p1 > 12) {
+          month = p0 - 1;
+          day = p1;
+        } else {
+          // Ambiguous: default to MM/DD/YYYY
+          month = p0 - 1;
+          day = p1;
+        }
+      } else {
+        // Two-digit year! E.g. MM/DD/YY or DD/MM/YY
+        year = p2 < 100 ? p2 + 2000 : p2;
+        if (p0 > 12) {
+          month = p1 - 1;
+          day = p0;
+        } else if (p1 > 12) {
+          month = p0 - 1;
+          day = p1;
+        } else {
+          // Ambiguous: default to MM/DD/YY
+          month = p0 - 1;
+          day = p1;
+        }
+      }
+
+      const d = new Date(year, month, day);
+      if (!isNaN(d.getTime())) return d;
+    }
+  }
+
+  // Fallback to standard parser
+  let d = new Date(cleaned);
+  if (!isNaN(d.getTime())) {
+    let year = d.getFullYear();
+    if (year < 100) {
+      d.setFullYear(year + 2000);
+    } else if (year >= 1900 && year < 2000) {
+      d.setFullYear(year + 100);
+    }
+    return d;
+  }
+  return null;
+}
+
+function getRddWindowDays(o: OTIFRecord): number | null {
+  if (!o.reqDelivery || !o.soCreateDate) return null;
+  const req = parseDateRobust(o.reqDelivery);
+  const so = parseDateRobust(o.soCreateDate);
+  if (!req || !so) return null;
+  return Math.round((req.getTime() - so.getTime()) / (1000 * 60 * 60 * 24));
+}
+
+function isCustomerPickupColumnKey(key: string, availableColumnKeys: string[]): boolean {
+  const k = key.trim().toLowerCase();
+  if (k === "customer_pickup" || k === "customer pickup" || k === "customerpickup") return true;
+  return resolveDefaultColumn("customer_pickup", availableColumnKeys) === key;
+}
+
+function isLegacyFirmColumnKey(key: string, availableColumnKeys: string[]): boolean {
+  const k = key.trim().toLowerCase();
+  if (k === "legacy firm" || k === "legacy_firm" || k === "legacyfirm") return true;
+  return resolveDefaultColumn("legacy firm", availableColumnKeys) === key;
+}
+
+function pickYesNoToken(uniqueValues: string[], kind: "yes" | "no"): string | undefined {
+  const re = kind === "yes" ? /^yes$/i : /^no$/i;
+  const exact = uniqueValues.find((v) => re.test(v.trim()));
+  if (exact) return exact;
+  const reShort = kind === "yes" ? /^y$/i : /^n$/i;
+  return uniqueValues.find((v) => reShort.test(v.trim()));
+}
+
+function pickLegacyFirmTokens(uniqueValues: string[]): { solenis?: string; diversy?: string; sigura?: string } {
+  const result: { solenis?: string; diversy?: string; sigura?: string } = {};
+  for (const val of uniqueValues) {
+    const v = val.trim().toLowerCase();
+    if (v.includes("solenis")) {
+      result.solenis = val;
+    } else if (v.includes("diversy") || v.includes("diversey")) {
+      result.diversy = val;
+    } else if (v.includes("sigura")) {
+      result.sigura = val;
+    }
+  }
+  return result;
+}
 import { cn } from "@/lib/utils";
 import type { OTIFRecord } from "@/types/otif";
 
@@ -55,6 +175,31 @@ function clampPageSize(raw: number): number {
 }
 
 const COMPUTED_COLUMN_KEYS = ["leadTime", "riskScore", "status", "riskSignals"] as const;
+
+const ALLOWED_COLUMN_FILTERS = new Set([
+  "sales order_x", "so line_x", "delivery_date", "so create date", "requested delivery date",
+  "ship_to", "legacy firm", "plant region", "routedays", "ordered_quantity_base_uom",
+  "confirmed_quantity_in_base_uom", "ordered_in_base_uom", "incoterms_x", "plant", "material",
+  "abc indicator", "sales organization", "customer name", "division of business name",
+  "act_goods_mvnt_date", "pland gds mvmnt date_otif_x", "total_del", "mat_avl_date_otif",
+  "mad_gap_days", "top1_feature", "top2_feature", "top3_feature", "combined_otif", "rule_applied",
+  "risksignals"
+].map(k => k.trim().toLowerCase()));
+
+const RULE_DESCRIPTIONS: Record<string, string> = {
+  "R6:ModelOnly": "Predicted by model based on historical patterns - refer risk signals for more info",
+  "R1:QtyShort": "Confirmed quantity is less than ordered quantity",
+  "R5:ConfHit": "Ship-to location has a strong on-time delivery history",
+  "R4:LeanMiss": "Ship-to location has missed delivery more than 50% of the time",
+  "R3:ConfMiss": "Ship-to location consistently misses delivery (>70% miss rate)",
+  "R2:PGILate": "Planned GI date is after RDD",
+  "R1:QtyShort|R5:ConfHit": "Confirmed quantity is less than ordered quantity, but ship-to has strong delivery record",
+  "R1:QtyShort|R3:ConfMiss": "Confirmed quantity is less than ordered quantity and ship-to has poor delivery history",
+  "R1:QtyShort|R4:LeanMiss": "Confirmed quantity is less than ordered quantity and ship-to has elevated miss rate",
+  "R2b:PGIExc1d|R5:ConfHit": "Planned GI slightly exceeds deadline, but ship-to is reliable",
+  "R2:PGILate|R5:ConfHit": "Planned GI is late, but ship-to has strong delivery record"
+};
+
 const COMPUTED_DISPLAY_NAMES: Record<string, string> = {
   leadTime: "Lead Time",
   riskScore: "Risk Score",
@@ -80,6 +225,7 @@ interface OrderTableProps {
   /** When set, apply a checkbox filter for that dimension value then clear via onDrillFilterApplied. */
   drillFilter?: { dimensionId: string; value: string } | null;
   onDrillFilterApplied?: () => void;
+  onFilteredOrdersChange?: (orders: OTIFRecord[]) => void;
 }
 
 type SortKey = string;
@@ -229,6 +375,36 @@ const SHAP_FEATURE_LABELS: Record<string, string> = {
   f_high_plant_risk: "High Risk Plant Flag",
   f_risk_stack: "Compounded Risk Flag",
   f_otif_risk_score: "Overall OTIF Risk Score",
+  "ship to": "Ship-To Party",
+  "ship_to": "Ship-To Party",
+  "csr": "Customer Service Rep",
+  "city": "City",
+  "plant": "Plant",
+  "hist miss rate material": "Historical Material Miss Rate",
+  "mad gap days": "MAD Gap Days",
+  "mad_gap_days": "MAD Gap Days",
+  "material": "Material Code",
+  "customer name": "Customer Name",
+  "division of business name": "Business Units",
+  "sales order": "Sales Order",
+  "so line": "SO Line Item",
+  "so create date": "Order Created Date",
+  "requested delivery date": "Requested Delivery Date",
+  "abc indicator": "ABC Classification",
+  "sales organization": "Sales Organization",
+  "delivery_date": "Delivery Date",
+  "plant region": "Plant Region",
+  "routedays": "Route Days",
+  "ordered_quantity_base_uom": "Ordered Qty (Base UOM)",
+  "confirmed_quantity_in_base_uom": "Confirmed Qty (Base UOM)",
+  "ordered_in_base_uom": "Ordered in Base UOM",
+  "incoterms_x": "Incoterms",
+  "act_goods_mvnt_date": "Actual Goods Movement Date",
+  "pland gds mvmnt date_otif_x": "Planned Goods Movement Date",
+  "total_del": "Total Delivery",
+  "mat_avl_date_otif": "Material Availability Date",
+  "rule_applied": "Rule Applied",
+  "combined_otif": "Model Output (Combined OTIF)",
 };
 
 const LEAD_TIME_THRESHOLD = 60;
@@ -300,6 +476,7 @@ export function OrderTable({
   onPageSizeChange,
   drillFilter,
   onDrillFilterApplied,
+  onFilteredOrdersChange,
 }: OrderTableProps) {
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState<SortKey | null>(null);
@@ -343,6 +520,11 @@ export function OrderTable({
   };
 
   const [columnWidths, setColumnWidths] = useState<Record<string, number>>({});
+  const getColWidth = (key: string): number | undefined => {
+    if (columnWidths[key] !== undefined) return columnWidths[key];
+    if (isRiskSignalsColumnKey(key)) return 150;
+    return undefined;
+  };
   const draggingKeyRef = useRef<string | null>(null);
   const resizeRef = useRef<{ key: string; startX: number; startWidth: number } | null>(null);
 
@@ -377,26 +559,28 @@ export function OrderTable({
     if (availableColumnKeys.length === 0) return [];
     const resolved = DEFAULT_COLUMN_KEYS
       .map((k) => resolveDefaultColumn(k, availableColumnKeys))
-      .filter((k) => availableColumnKeys.includes(k));
-    return resolved.length > 0 ? Array.from(new Set(resolved)) : [...availableColumnKeys];
+      .filter((k) => availableColumnKeys.includes(k) && ALLOWED_COLUMN_FILTERS.has(k.toLowerCase().trim()));
+    return resolved.length > 0
+      ? Array.from(new Set(resolved))
+      : availableColumnKeys.filter((k) => ALLOWED_COLUMN_FILTERS.has(k.toLowerCase().trim()));
   }, [availableColumnKeys]);
 
   const [visibleColumnKeys, setVisibleColumnKeys] = useState<string[]>(() => []);
   useEffect(() => {
     if (availableColumnKeys.length === 0) return;
     const saved = safeReadLayout();
-    const savedOrder = saved?.order?.filter((k) => availableColumnKeys.includes(k)) ?? [];
+    const savedOrder = saved?.order?.filter((k) => availableColumnKeys.includes(k) && ALLOWED_COLUMN_FILTERS.has(k.toLowerCase().trim())) ?? [];
     const savedWidths = saved?.widths ?? {};
 
     setVisibleColumnKeys((prev) => {
       if (prev.length > 0) {
-        const stillVisible = prev.filter((k) => availableColumnKeys.includes(k));
+        const stillVisible = prev.filter((k) => availableColumnKeys.includes(k) && ALLOWED_COLUMN_FILTERS.has(k.toLowerCase().trim()));
         if (savedOrder.length === 0) return stillVisible;
         const inSavedOrder = savedOrder.filter((k) => stillVisible.includes(k));
         const rest = stillVisible.filter((k) => !inSavedOrder.includes(k));
         return [...inSavedOrder, ...rest];
       }
-      const initial = defaultVisibleKeys.length > 0 ? [...defaultVisibleKeys] : [...availableColumnKeys];
+      const initial = defaultVisibleKeys.length > 0 ? [...defaultVisibleKeys] : availableColumnKeys.filter((k) => ALLOWED_COLUMN_FILTERS.has(k.toLowerCase().trim()));
       if (savedOrder.length === 0) return initial;
       const inSavedOrder = savedOrder.filter((k) => initial.includes(k));
       const rest = initial.filter((k) => !inSavedOrder.includes(k));
@@ -493,6 +677,7 @@ export function OrderTable({
   const [rangeFilters, setRangeFilters] = useState<Record<string, { min?: number; max?: number }>>({});
   const [dateFilters, setDateFilters] = useState<Record<string, { start?: string; end?: string }>>({});
   const [leadTimeMode, setLeadTimeMode] = useState<"lt" | "gte">("lt");
+  const [rddDaysFilter, setRddDaysFilter] = useState<"all" | "lt3" | "gte3" | "lt7" | "gte7">("all");
 
   const columnTypeCache = useRef<Record<string, ColumnFilterType>>({});
 
@@ -501,6 +686,7 @@ export function OrderTable({
       if (isRiskSignalsColumnKey(key)) return "none";
       if (key === "leadTime") return "leadtime";
       if (key === "riskScore") return "range";
+      if (isDateColumnKey(key)) return "date";
       if (isMaterialCodeColumnKey(key, availableColumnKeys)) return "checkbox";
       if (isStatusColumnKey(key, availableColumnKeys)) return "checkbox";
       if (isSalesOrderColumnKey(key, availableColumnKeys)) return "checkbox";
@@ -625,6 +811,7 @@ export function OrderTable({
     setRangeFilters({});
     setDateFilters({});
     setLeadTimeMode("lt");
+    setRddDaysFilter("all");
     setSearch("");
   };
 
@@ -663,6 +850,26 @@ export function OrderTable({
       return leadTimeMode === "lt" ? days < LEAD_TIME_THRESHOLD : days >= LEAD_TIME_THRESHOLD;
     });
 
+    // RDD days filter
+    if (rddDaysFilter !== "all") {
+      result = result.filter((o) => {
+        const days = getRddWindowDays(o);
+        if (days === null) return false;
+        switch (rddDaysFilter) {
+          case "lt3":
+            return days < 3;
+          case "gte3":
+            return days >= 3;
+          case "lt7":
+            return days < 7;
+          case "gte7":
+            return days >= 7;
+          default:
+            return true;
+        }
+      });
+    }
+
     // Dynamic checkbox filters
     for (const [key, selected] of Object.entries(checkboxFilters)) {
       if (selected.size === 0) continue;
@@ -687,21 +894,25 @@ export function OrderTable({
     // Dynamic date filters
     for (const [key, range] of Object.entries(dateFilters)) {
       if (range.start) {
-        const start = new Date(range.start);
-        result = result.filter((o) => {
-          const raw = String(getCellValue(o, key));
-          const d = new Date(raw);
-          return isNaN(d.getTime()) || d >= start;
-        });
+        const start = parseDateRobust(range.start);
+        if (start) {
+          result = result.filter((o) => {
+            const raw = String(getCellValue(o, key));
+            const d = parseDateRobust(raw);
+            return !d || d >= start;
+          });
+        }
       }
       if (range.end) {
-        const end = new Date(range.end);
-        end.setHours(23, 59, 59, 999);
-        result = result.filter((o) => {
-          const raw = String(getCellValue(o, key));
-          const d = new Date(raw);
-          return isNaN(d.getTime()) || d <= end;
-        });
+        const end = parseDateRobust(range.end);
+        if (end) {
+          end.setHours(23, 59, 59, 999);
+          result = result.filter((o) => {
+            const raw = String(getCellValue(o, key));
+            const d = parseDateRobust(raw);
+            return !d || d <= end;
+          });
+        }
       }
     }
 
@@ -709,6 +920,15 @@ export function OrderTable({
       result.sort((a, b) => {
         let aVal: string | number = getCellValue(a, sortBy);
         let bVal: string | number = getCellValue(b, sortBy);
+        if (isDateColumnKey(sortBy)) {
+          const da = parseDateRobust(String(aVal));
+          const db = parseDateRobust(String(bVal));
+          if (da && db) {
+            return sortDir === "asc" ? da.getTime() - db.getTime() : db.getTime() - da.getTime();
+          }
+          if (da) return sortDir === "asc" ? -1 : 1;
+          if (db) return sortDir === "asc" ? 1 : -1;
+        }
         const aNum = typeof aVal === "number" ? aVal : parseNumeric(String(aVal));
         const bNum = typeof bVal === "number" ? bVal : parseNumeric(String(bVal));
         if (!isNaN(aNum) && !isNaN(bNum)) {
@@ -723,6 +943,10 @@ export function OrderTable({
     }
     return result;
   }, [orders, deferredSearch, sortBy, sortDir, checkboxFilters, rangeFilters, dateFilters, leadTimeMode]);
+
+  useEffect(() => {
+    onFilteredOrdersChange?.(filtered);
+  }, [filtered, onFilteredOrdersChange]);
 
   const filteredLengthRef = useRef<number | null>(null);
   useEffect(() => {
@@ -740,9 +964,28 @@ export function OrderTable({
   const pageOrders = filtered.slice((page - 1) * pageSize, page * pageSize);
 
   const statusFilterKey = useMemo(
-    () => visibleColumnKeys.find((k) => isStatusColumnKey(k, availableColumnKeys)),
-    [visibleColumnKeys, availableColumnKeys]
+    () => availableColumnKeys.find((k) => isStatusColumnKey(k, availableColumnKeys)),
+    [availableColumnKeys]
   );
+
+  const customerPickupFilterKey = useMemo(
+    () => availableColumnKeys.find((k) => isCustomerPickupColumnKey(k, availableColumnKeys)),
+    [availableColumnKeys]
+  );
+
+  const legacyFirmFilterKey = useMemo(
+    () => availableColumnKeys.find((k) => isLegacyFirmColumnKey(k, availableColumnKeys)),
+    [availableColumnKeys]
+  );
+
+  const soKey = useMemo(() => resolveDefaultColumn("sales order", availableColumnKeys), [availableColumnKeys]);
+  const soLineKey = useMemo(() => resolveDefaultColumn("so line", availableColumnKeys), [availableColumnKeys]);
+  const rddKey = useMemo(() => resolveDefaultColumn("requested delivery date", availableColumnKeys), [availableColumnKeys]);
+  const plantKey = useMemo(() => resolveDefaultColumn("plant", availableColumnKeys), [availableColumnKeys]);
+
+  const topFilterKeys = useMemo(() => {
+    return [soKey, soLineKey, rddKey, plantKey].filter((k) => availableColumnKeys.includes(k));
+  }, [soKey, soLineKey, rddKey, plantKey, availableColumnKeys]);
 
   const statusUniqueValues = useMemo(
     () => (statusFilterKey ? getUniqueValues(statusFilterKey) : []),
@@ -760,6 +1003,88 @@ export function OrderTable({
     if (statusMissToken && sel.has(statusMissToken)) return "miss";
     return "all";
   }, [statusFilterKey, checkboxFilters, statusHitToken, statusMissToken]);
+
+  // --- Customer Pickup Segment Filter ---
+  const customerPickupUniqueValues = useMemo(
+    () => (customerPickupFilterKey ? getUniqueValues(customerPickupFilterKey) : []),
+    [customerPickupFilterKey, getUniqueValues]
+  );
+
+  const customerPickupYesToken = useMemo(() => pickYesNoToken(customerPickupUniqueValues, "yes"), [customerPickupUniqueValues]);
+  const customerPickupNoToken = useMemo(() => pickYesNoToken(customerPickupUniqueValues, "no"), [customerPickupUniqueValues]);
+
+  const customerPickupSegment: "all" | "yes" | "no" = useMemo(() => {
+    if (!customerPickupFilterKey) return "all";
+    const sel = checkboxFilters[customerPickupFilterKey];
+    if (!sel || sel.size !== 1) return "all";
+    if (customerPickupYesToken && sel.has(customerPickupYesToken)) return "yes";
+    if (customerPickupNoToken && sel.has(customerPickupNoToken)) return "no";
+    return "all";
+  }, [customerPickupFilterKey, checkboxFilters, customerPickupYesToken, customerPickupNoToken]);
+
+  const setCustomerPickupSegment = (mode: "all" | "yes" | "no") => {
+    if (!customerPickupFilterKey) return;
+    setPage(1);
+    startTransition(() => {
+      if (mode === "all") {
+        setCheckboxFilter(customerPickupFilterKey, new Set());
+        return;
+      }
+      const token = mode === "yes" ? customerPickupYesToken : customerPickupNoToken;
+      if (token) setCheckboxFilter(customerPickupFilterKey, new Set([token]));
+    });
+  };
+
+  const defaultInitializedRef = useRef(false);
+
+  useEffect(() => {
+    if (defaultInitializedRef.current) return;
+    if (customerPickupFilterKey && customerPickupNoToken) {
+      setCheckboxFilters((prev) => ({
+        ...prev,
+        [customerPickupFilterKey]: new Set([customerPickupNoToken]),
+      }));
+      defaultInitializedRef.current = true;
+    }
+  }, [customerPickupFilterKey, customerPickupNoToken]);
+
+  // --- Legacy Firm Segment Filter ---
+  const legacyFirmUniqueValues = useMemo(
+    () => (legacyFirmFilterKey ? getUniqueValues(legacyFirmFilterKey) : []),
+    [legacyFirmFilterKey, getUniqueValues]
+  );
+
+  const {
+    solenis: legacySolenisToken,
+    diversy: legacyDiversyToken,
+    sigura: legacySiguraToken,
+  } = useMemo(() => pickLegacyFirmTokens(legacyFirmUniqueValues), [legacyFirmUniqueValues]);
+
+  const legacyFirmSegment: "all" | "solenis" | "diversy" | "sigura" = useMemo(() => {
+    if (!legacyFirmFilterKey) return "all";
+    const sel = checkboxFilters[legacyFirmFilterKey];
+    if (!sel || sel.size !== 1) return "all";
+    if (legacySolenisToken && sel.has(legacySolenisToken)) return "solenis";
+    if (legacyDiversyToken && sel.has(legacyDiversyToken)) return "diversy";
+    if (legacySiguraToken && sel.has(legacySiguraToken)) return "sigura";
+    return "all";
+  }, [legacyFirmFilterKey, checkboxFilters, legacySolenisToken, legacyDiversyToken, legacySiguraToken]);
+
+  const setLegacyFirmSegment = (mode: "all" | "solenis" | "diversy" | "sigura") => {
+    if (!legacyFirmFilterKey) return;
+    setPage(1);
+    startTransition(() => {
+      if (mode === "all") {
+        setCheckboxFilter(legacyFirmFilterKey, new Set());
+        return;
+      }
+      let token: string | undefined;
+      if (mode === "solenis") token = legacySolenisToken;
+      else if (mode === "diversy") token = legacyDiversyToken;
+      else if (mode === "sigura") token = legacySiguraToken;
+      if (token) setCheckboxFilter(legacyFirmFilterKey, new Set([token]));
+    });
+  };
 
   const setStatusSegment = (mode: "all" | "hit" | "miss") => {
     if (!statusFilterKey) return;
@@ -823,9 +1148,10 @@ export function OrderTable({
     count += Object.keys(rangeFilters).length;
     count += Object.keys(dateFilters).length;
     if (leadTimeMode !== "lt") count++;
+    if (rddDaysFilter !== "all") count++;
     if (search) count++;
     return count;
-  }, [checkboxFilters, rangeFilters, dateFilters, leadTimeMode, search]);
+  }, [checkboxFilters, rangeFilters, dateFilters, leadTimeMode, rddDaysFilter, search]);
 
   return (
     <div className="glass-table-panel animate-fade-in pl-4">
@@ -887,8 +1213,10 @@ export function OrderTable({
               </div>
               <ScrollArea className="h-[280px]">
                 <div className="p-2 space-y-0.5">
-                  {availableColumnKeys.map((key) => {
-                    const isVisible = visibleColumnKeys.includes(key);
+                  {availableColumnKeys
+                    .filter((key) => ALLOWED_COLUMN_FILTERS.has(key.toLowerCase().trim()))
+                    .map((key) => {
+                      const isVisible = visibleColumnKeys.includes(key);
                     const index = visibleColumnKeys.indexOf(key);
                     return (
                       <div
@@ -947,7 +1275,7 @@ export function OrderTable({
         {/* ── Dynamic column filter dock ── */}
         <div
           className={cn(
-            "scrollbar-hide flex min-w-0 flex-nowrap items-center gap-2 overflow-x-auto overflow-y-visible pb-1 [-webkit-overflow-scrolling:touch]",
+            "scrollbar-hide flex min-w-0 flex-nowrap items-center gap-5 overflow-x-auto overflow-y-visible py-3 px-1.5 -my-3 [-webkit-overflow-scrolling:touch]",
             "[&>*]:shrink-0",
           )}
         >
@@ -955,10 +1283,8 @@ export function OrderTable({
             <div
               className={cn(
                 "inline-flex items-center rounded-xl p-0.5 [--seg-r:calc(var(--radius)-0.125rem)] glass-surface glass-surface-ring shadow-sm transition-[border-color,box-shadow] duration-300",
-                statusSegment === "miss" &&
-                  "border-destructive/40 shadow-[0_8px_28px_-10px_hsl(var(--destructive)/0.35)] dark:border-destructive/35",
-                statusSegment === "hit" &&
-                  "border-primary/35 shadow-[0_8px_28px_-10px_hsl(var(--primary)/0.22)] dark:border-primary/25"
+                statusSegment === "miss" && "segment-glow-red",
+                statusSegment === "hit" && "segment-glow-green"
               )}
               role="group"
               aria-label="Filter by OTIF status"
@@ -999,57 +1325,113 @@ export function OrderTable({
             </div>
           )}
 
-          {visibleColumnKeys.includes("leadTime") && (
+          {customerPickupFilterKey && (
             <div
               className={cn(
                 "inline-flex items-center rounded-xl p-0.5 [--seg-r:calc(var(--radius)-0.125rem)] glass-surface glass-surface-ring shadow-sm transition-[border-color,box-shadow] duration-300",
-                leadTimeMode === "gte" &&
-                  "border-primary/35 shadow-[0_8px_28px_-10px_hsl(var(--primary)/0.22)] dark:border-primary/25"
+                customerPickupSegment === "yes" && "segment-glow-green",
+                customerPickupSegment === "no" && "segment-glow-red"
               )}
               role="group"
-              aria-label="Filter by lead time"
+              aria-label="Filter by customer pickup"
             >
-              <button
-                type="button"
-                onClick={() => {
-                  setPage(1);
-                  setLeadTimeMode("lt");
-                }}
-                className={cn(
-                  "rounded-l-[var(--seg-r)] rounded-r-md px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
-                  leadTimeMode === "lt"
-                    ? "bg-background/55 text-foreground shadow-sm ring-1 ring-border/45"
-                    : "text-muted-foreground hover:bg-background/50 hover:text-foreground"
-                )}
-              >
-                &lt; {LEAD_TIME_THRESHOLD} days
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setPage(1);
-                  setLeadTimeMode("gte");
-                }}
-                className={cn(
-                  "rounded-l-md rounded-r-[var(--seg-r)] px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
-                  leadTimeMode === "gte"
-                    ? "bg-primary/20 text-primary shadow-sm ring-1 ring-primary/20"
-                    : "text-muted-foreground hover:bg-background/50 hover:text-foreground"
-                )}
-              >
-                ≥ {LEAD_TIME_THRESHOLD} days
-              </button>
+              {(["all", "yes", "no"] as const).map((mode, i, modes) => {
+                const label = mode === "all" ? "All" : mode === "yes" ? "Yes" : "No";
+                const active = customerPickupSegment === mode;
+                const disabled =
+                  mode === "yes"
+                    ? !customerPickupYesToken
+                    : mode === "no"
+                      ? !customerPickupNoToken
+                      : false;
+                const activeGreen = active && (mode === "all" || mode === "yes");
+                const activeRed = active && mode === "no";
+                const isFirst = i === 0;
+                const isLast = i === modes.length - 1;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setCustomerPickupSegment(mode)}
+                    className={cn(
+                      "px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
+                      isFirst ? "rounded-l-[var(--seg-r)]" : "rounded-l-md",
+                      isLast ? "rounded-r-[var(--seg-r)]" : "rounded-r-md",
+                      activeGreen && "bg-primary/20 text-primary shadow-sm ring-1 ring-primary/20",
+                      activeRed && "bg-destructive/20 text-destructive shadow-sm ring-1 ring-destructive/25",
+                      !active && "text-muted-foreground hover:bg-background/50 hover:text-foreground",
+                      disabled && "pointer-events-none opacity-40"
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
             </div>
           )}
 
-          {visibleColumnKeys
-            .filter(
-              (key) =>
-                !isStatusColumnKey(key, availableColumnKeys) &&
-                !isRiskSignalsColumnKey(key) &&
-                key !== "leadTime"
-            )
-            .map((key) => {
+          {legacyFirmFilterKey && (
+            <div
+              className={cn(
+                "inline-flex items-center rounded-xl p-0.5 [--seg-r:calc(var(--radius)-0.125rem)] glass-surface glass-surface-ring shadow-sm transition-[border-color,box-shadow] duration-300",
+                legacyFirmSegment === "solenis" && "segment-glow-green",
+                legacyFirmSegment === "diversy" && "segment-glow-diversy",
+                legacyFirmSegment === "sigura" && "segment-glow-sigura"
+              )}
+              role="group"
+              aria-label="Filter by legacy firm"
+            >
+              {(["all", "solenis", "diversy", "sigura"] as const).map((mode, i, modes) => {
+                const label =
+                  mode === "all"
+                    ? "All"
+                    : mode === "solenis"
+                      ? "Solenis"
+                      : mode === "diversy"
+                        ? "Diversey"
+                        : "Sigura";
+                const active = legacyFirmSegment === mode;
+                const disabled =
+                  mode === "solenis"
+                    ? !legacySolenisToken
+                    : mode === "diversy"
+                      ? !legacyDiversyToken
+                      : mode === "sigura"
+                        ? !legacySiguraToken
+                        : false;
+                const activeSolenis = active && mode === "solenis";
+                const activeDiversy = active && mode === "diversy";
+                const activeSigura = active && mode === "sigura";
+                const activeAll = active && mode === "all";
+                const isFirst = i === 0;
+                const isLast = i === modes.length - 1;
+                return (
+                  <button
+                    key={mode}
+                    type="button"
+                    disabled={disabled}
+                    onClick={() => setLegacyFirmSegment(mode)}
+                    className={cn(
+                      "px-3 py-1.5 text-xs font-semibold transition-[color,background-color,box-shadow] duration-200",
+                      isFirst ? "rounded-l-[var(--seg-r)]" : "rounded-l-md",
+                      isLast ? "rounded-r-[var(--seg-r)]" : "rounded-r-md",
+                      activeAll && "bg-primary/20 text-primary shadow-sm ring-1 ring-primary/20",
+                      activeSolenis && "bg-primary/20 text-primary shadow-sm ring-1 ring-primary/20",
+                      activeDiversy && "active-segment-diversy",
+                      activeSigura && "active-segment-sigura",
+                      !active && "text-muted-foreground hover:bg-background/50 hover:text-foreground",
+                      disabled && "pointer-events-none opacity-40"
+                    )}
+                  >
+                    {label}
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {topFilterKeys.map((key) => {
             const label = getColumnDisplayName(key);
             const filterType = getColumnFilterType(key);
             const isActive = columnHasActiveFilter(key);
@@ -1107,18 +1489,61 @@ export function OrderTable({
 
             if (filterType === "date") {
               return (
-                <ColumnFilterDate
-                  key={key}
-                  label={label}
-                  currentStart={dateFilters[key]?.start}
-                  currentEnd={dateFilters[key]?.end}
-                  onChange={(s, e) => {
-                    setPage(1);
-                    startTransition(() => setDateFilter(key, s, e));
-                  }}
-                  triggerClassName={pillClass}
-                  showLabel
-                />
+                <div key={key} className="inline-flex items-center gap-2">
+                  <ColumnFilterDate
+                    label={label}
+                    currentStart={dateFilters[key]?.start}
+                    currentEnd={dateFilters[key]?.end}
+                    onChange={(s, e) => {
+                      setPage(1);
+                      startTransition(() => setDateFilter(key, s, e));
+                    }}
+                    triggerClassName={pillClass}
+                    showLabel
+                  />
+                  {key === rddKey && (
+                    <div
+                      className={cn(
+                        "inline-flex items-center rounded-xl p-0.5 [--seg-r:calc(var(--radius)-0.125rem)] glass-surface glass-surface-ring shadow-sm transition-[border-color,box-shadow] duration-300",
+                        rddDaysFilter !== "all" &&
+                          "border-primary/35 shadow-[0_8px_28px_-10px_hsl(var(--primary)/0.22)] dark:border-primary/25"
+                      )}
+                      role="group"
+                      aria-label="Filter by RDD lead window"
+                    >
+                      {([
+                        { value: "all", label: "All" },
+                        { value: "lt3", label: "< 3 Days" },
+                        { value: "gte3", label: "≥ 3 Days" },
+                        { value: "lt7", label: "< 7 Days" },
+                        { value: "gte7", label: "≥ 7 Days" },
+                      ] as const).map((opt, i, opts) => {
+                        const active = rddDaysFilter === opt.value;
+                        const isFirst = i === 0;
+                        const isLast = i === opts.length - 1;
+                        return (
+                          <button
+                            key={opt.value}
+                            type="button"
+                            onClick={() => {
+                              setPage(1);
+                              setRddDaysFilter(opt.value);
+                            }}
+                            className={cn(
+                              "px-2.5 py-1.5 text-[11px] font-semibold transition-[color,background-color,box-shadow] duration-200",
+                              isFirst ? "rounded-l-[var(--seg-r)]" : "rounded-l-md",
+                              isLast ? "rounded-r-[var(--seg-r)]" : "rounded-r-md",
+                              active && "bg-primary/20 text-primary shadow-sm ring-1 ring-primary/20",
+                              !active && "text-muted-foreground hover:bg-background/50 hover:text-foreground"
+                            )}
+                          >
+                            {opt.label}
+                          </button>
+                        );
+                      })}
+                    </div>
+                  )}
+                </div>
               );
             }
 
@@ -1186,7 +1611,7 @@ export function OrderTable({
             <tr>
               {visibleColumnKeys.map((key) => {
                 const label = getColumnDisplayName(key);
-                const width = columnWidths[key];
+                const width = getColWidth(key);
                 const showHeaderChrome = sortBy === key;
                 return (
                   <th
@@ -1215,7 +1640,7 @@ export function OrderTable({
                       <div
                         className={cn(
                           "flex shrink-0 items-center justify-end gap-px transition-opacity duration-200 ease-out",
-                          showHeaderChrome
+                          (showHeaderChrome || columnHasActiveFilter(key))
                             ? "opacity-100"
                             : "opacity-0 group-hover/header:opacity-100 focus-within:opacity-100",
                         )}
@@ -1239,6 +1664,121 @@ export function OrderTable({
                             />
                           )}
                         </button>
+                        {(() => {
+                          const filterType = getColumnFilterType(key);
+                          if (filterType === "none") return null;
+
+                          if (filterType === "leadtime") {
+                            return (
+                              <Popover>
+                                <PopoverTrigger asChild>
+                                  <button
+                                    type="button"
+                                    title="Filter Lead Time"
+                                    className={cn(
+                                      "inline-flex h-6 w-6 items-center justify-center rounded transition-all duration-200",
+                                      leadTimeMode !== "lt"
+                                        ? "bg-primary/12 text-primary opacity-100"
+                                        : "text-muted-foreground opacity-70 hover:opacity-100 hover:bg-muted/60 hover:text-foreground"
+                                    )}
+                                  >
+                                    <Filter className="h-3 w-3" strokeWidth={2.5} />
+                                  </button>
+                                </PopoverTrigger>
+                                <PopoverContent align="end" className="w-48 p-2 z-[100]">
+                                  <p className="mb-2 text-xs font-semibold px-1">Lead Time Filter</p>
+                                  <div className="space-y-1">
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPage(1);
+                                        setLeadTimeMode("lt");
+                                      }}
+                                      className={cn(
+                                        "w-full text-left px-2 py-1.5 text-xs rounded transition-colors",
+                                        leadTimeMode === "lt"
+                                          ? "bg-primary/15 text-primary font-semibold"
+                                          : "hover:bg-muted text-muted-foreground"
+                                      )}
+                                    >
+                                      &lt; 60 days
+                                    </button>
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        setPage(1);
+                                        setLeadTimeMode("gte");
+                                      }}
+                                      className={cn(
+                                        "w-full text-left px-2 py-1.5 text-xs rounded transition-colors",
+                                        leadTimeMode === "gte"
+                                          ? "bg-primary/15 text-primary font-semibold"
+                                          : "hover:bg-muted text-muted-foreground"
+                                      )}
+                                    >
+                                      ≥ 60 days
+                                    </button>
+                                  </div>
+                                </PopoverContent>
+                              </Popover>
+                            );
+                          }
+
+                          if (filterType === "checkbox") {
+                            const opts = getUniqueValues(key);
+                            const selected = checkboxFilters[key] ?? EMPTY_FILTER_SELECTION;
+                            return (
+                              <ColumnFilterCheckbox
+                                label={label}
+                                options={opts}
+                                selected={selected}
+                                onChange={(val) => {
+                                  setPage(1);
+                                  startTransition(() => setCheckboxFilter(key, val));
+                                }}
+                                showLabel={false}
+                              />
+                            );
+                          }
+
+                          if (filterType === "range") {
+                            const bounds = getRangeBounds(key);
+                            const unit = key === "riskScore" ? "%" : "";
+                            return (
+                              <ColumnFilterRange
+                                label={label}
+                                min={bounds.min}
+                                max={bounds.max}
+                                currentMin={rangeFilters[key]?.min}
+                                currentMax={rangeFilters[key]?.max}
+                                unit={unit}
+                                onChange={(mn, mx) => {
+                                  setPage(1);
+                                  startTransition(() => setRangeFilter(key, mn, mx));
+                                }}
+                                showLabel={false}
+                                variant={key === "riskScore" ? "riskScore" : "default"}
+                              />
+                            );
+                          }
+
+                          if (filterType === "date") {
+                            return (
+                              <ColumnFilterDate
+                                label={label}
+                                currentStart={dateFilters[key]?.start}
+                                currentEnd={dateFilters[key]?.end}
+                                onChange={(s, e) => {
+                                  setPage(1);
+                                  startTransition(() => setDateFilter(key, s, e));
+                                }}
+                                showLabel={false}
+                              />
+                            );
+                          }
+
+                          return null;
+                        })()}
                       </div>
                     </div>
                     <div
@@ -1248,7 +1788,7 @@ export function OrderTable({
                         e.preventDefault();
                         e.stopPropagation();
                         const th = (e.currentTarget as HTMLDivElement).parentElement as HTMLElement | null;
-                        const startWidth = th ? th.getBoundingClientRect().width : (columnWidths[key] ?? 160);
+                        const startWidth = th ? th.getBoundingClientRect().width : (getColWidth(key) ?? 160);
                         resizeRef.current = { key, startX: e.clientX, startWidth };
                         document.body.style.cursor = "col-resize";
                         document.body.style.userSelect = "none";
@@ -1271,11 +1811,14 @@ export function OrderTable({
                 onClick={() => onOrderClick(o)}
               >
                 {visibleColumnKeys.map((key) => {
-                  const val = key === "riskSignals" ? getRiskSignals(o) : getCellValue(o, key);
-                  const isStatus = key === "status" || key === "otif_hit/miss" || key === "otif_hit";
-                  const isSalesOrder = key === "sales order" || key === "sales_order";
+                  let val = key === "riskSignals" ? getRiskSignals(o) : getCellValue(o, key);
+                  if ((key === "top1_feature" || key === "top2_feature" || key === "top3_feature") && typeof val === "string") {
+                    val = translateFeatureName(val);
+                  }
+                  const isStatus = key === "status" || key === "otif_hit/miss" || key === "otif_hit" || key === "combined_otif";
+                  const isSalesOrder = key === "sales order" || key === "sales_order" || key === "sales order_x";
                   const isRiskScore = key === "riskScore";
-                  const width = columnWidths[key];
+                  const width = getColWidth(key);
                   return (
                     <td
                       key={key}
@@ -1292,6 +1835,20 @@ export function OrderTable({
                         </span>
                       ) : isRiskScore && typeof val === "number" ? (
                         `${val}%`
+                      ) : key === "rule_applied" && typeof val === "string" ? (
+                        <span className="text-[11px] text-muted-foreground leading-snug block text-left break-words whitespace-normal">
+                          {(() => {
+                            const trimmed = val.trim();
+                            const desc = RULE_DESCRIPTIONS[trimmed];
+                            if (!desc) return val;
+                            const prefixes = trimmed
+                              .split("|")
+                              .map((part) => part.split(":")[0].trim())
+                              .filter(Boolean)
+                              .join("|");
+                            return prefixes ? `${prefixes}: ${desc}` : desc;
+                          })()}
+                        </span>
                       ) : (
                         <span className="block text-left break-words whitespace-normal">{String(val ?? "")}</span>
                       )}

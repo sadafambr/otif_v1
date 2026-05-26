@@ -17,6 +17,7 @@ GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 _client: Optional[genai.Client] = None
 
+
 def _get_client() -> genai.Client:
     global _client
     if _client is None:
@@ -25,6 +26,7 @@ def _get_client() -> genai.Client:
             raise RuntimeError("GEMINI_API_KEY is not set. Set it in environment or otif-genai/.env.")
         _client = genai.Client(api_key=api_key)
     return _client
+
 
 FEATURE_NAME_MAP = {
     "f_so_to_rdd_days": {"business_name": "Order-to-Delivery Window", "technical_name": "SO to RDD Lead Days"},
@@ -76,9 +78,39 @@ FEATURE_NAME_MAP = {
     "f_high_plant_risk": {"business_name": "High Risk Plant Flag", "technical_name": "Structurally High Plant Risk Indicator"},
     "f_risk_stack": {"business_name": "Compounded Risk Flag", "technical_name": "Tight Order × High-Risk Plant Stacked Indicator"},
     "f_otif_risk_score": {"business_name": "Overall OTIF Risk Score", "technical_name": "Composite OTIF Risk Score (All Critical Flags)"},
+    "ship to": {"business_name": "Ship-To Party", "technical_name": "Ship_To"},
+    "ship_to": {"business_name": "Ship-To Party", "technical_name": "Ship_To"},
+    "csr": {"business_name": "Customer Service Rep", "technical_name": "CSR"},
+    "city": {"business_name": "City", "technical_name": "City"},
+    "plant": {"business_name": "Plant", "technical_name": "Plant"},
+    "hist miss rate material": {"business_name": "Historical Material Miss Rate", "technical_name": "Hist Miss Rate Material"},
+    "mad gap days": {"business_name": "MAD Gap Days", "technical_name": "Mad Gap Days"},
+    "mad_gap_days": {"business_name": "MAD Gap Days", "technical_name": "Mad Gap Days"},
+    "material": {"business_name": "Material Code", "technical_name": "Material"},
+    "customer name": {"business_name": "Customer Name", "technical_name": "Customer Name"},
+    "division of business name": {"business_name": "Business Units", "technical_name": "Division of Business Name"},
+    "sales order": {"business_name": "Sales Order", "technical_name": "Sales Order"},
+    "so line": {"business_name": "SO Line Item", "technical_name": "SO Line"},
+    "so create date": {"business_name": "Order Created Date", "technical_name": "SO create date"},
+    "requested delivery date": {"business_name": "Requested Delivery Date", "technical_name": "Requested Delivery Date"},
+    "abc indicator": {"business_name": "ABC Classification", "technical_name": "ABC Indicator"},
+    "sales organization": {"business_name": "Sales Organization", "technical_name": "Sales Organization"},
+    "delivery_date": {"business_name": "Delivery Date", "technical_name": "Delivery Date"},
+    "plant region": {"business_name": "Plant Region", "technical_name": "Plant Region"},
+    "routedays": {"business_name": "Route Days", "technical_name": "RouteDays"},
+    "ordered_quantity_base_uom": {"business_name": "Ordered Qty (Base UOM)", "technical_name": "Ordered_Quantity_Base_UOM"},
+    "confirmed_quantity_in_base_uom": {"business_name": "Confirmed Qty (Base UOM)", "technical_name": "Confirmed_Quantity_in_Base_UOM"},
+    "ordered_in_base_uom": {"business_name": "Ordered in Base UOM", "technical_name": "Ordered_in_Base_UOM"},
+    "incoterms_x": {"business_name": "Incoterms", "technical_name": "Incoterms_x"},
+    "act_goods_mvnt_date": {"business_name": "Actual Goods Movement Date", "technical_name": "Act_Goods_Mvnt_Date"},
+    "pland gds mvmnt date_otif_x": {"business_name": "Planned Goods Movement Date", "technical_name": "Pland Gds Mvmnt Date_OTIF_x"},
+    "total_del": {"business_name": "Total Delivery", "technical_name": "total_del"},
+    "mat_avl_date_otif": {"business_name": "Material Availability Date", "technical_name": "Mat_Avl_Date_OTIF"},
+    "rule_applied": {"business_name": "Rule Applied", "technical_name": "rule_applied"},
+    "combined_otif": {"business_name": "Model Output (Combined OTIF)", "technical_name": "combined_otif"},
 }
 
-# Business rule metadata (aligned with rule_applied column in model output) ─
+# Business rule metadata (aligned with rule_applied column in model output)
 RULE_META = {
     "R6:ModelOnly": {
         "rule_name": "Rule 6",
@@ -172,6 +204,7 @@ RULE_APPLIED_COMBO_UI_SORTED: dict[str, str] = {
     "|".join(sorted(k.split("|"))): v for k, v in RULE_APPLIED_COMBO_UI.items() if "|" in k
 }
 
+
 def _parse_rules(rule_applied: str) -> list[str]:
     """Split a pipe-delimited rule string into individual rule codes."""
     if not rule_applied:
@@ -223,7 +256,6 @@ def _build_rules_logic_bullets(rule_applied: str) -> list[str]:
     """UI-facing Rules logic lines sourced from the rule_applied column."""
     combo_text = _lookup_combo_ui(rule_applied)
     if combo_text:
-        # For combo, prefix with rule names if we can resolve them
         codes = _parse_rules(rule_applied)
         rule_names = [RULE_META[c]["rule_name"] for c in codes if c in RULE_META]
         if rule_names:
@@ -251,22 +283,14 @@ def _build_rules_logic_bullets(rule_applied: str) -> list[str]:
 
 
 def _replace_rules_logic_section(text: str, rule_applied: str) -> str:
-    """Overwrite the Rules logic block with deterministic text from rule_applied.
-
-    This always replaces the LLM's Rules logic bullets with the pre-built
-    rule-name-prefixed bullets so the rule number (e.g. "Rule 5:") is
-    guaranteed to appear regardless of what the model wrote.
-    """
+    """Overwrite the Rules logic block with deterministic text from rule_applied."""
     bullets = _build_rules_logic_bullets(rule_applied)
-    # Ensure every bullet is prefixed with a rule name — safety net in case
-    # _build_rules_logic_bullets somehow returned bare text.
     rule_codes = _parse_rules(rule_applied)
     named_bullets: list[str] = []
     for idx, bullet in enumerate(bullets):
         code = rule_codes[idx] if idx < len(rule_codes) else None
         meta = RULE_META.get(code, {}) if code else {}
         rule_name = meta.get("rule_name", "")
-        # If bullet doesn't already start with "Rule N:" pattern, prepend it
         if rule_name and not re.match(rf"(?i)^{re.escape(rule_name)}\s*:", bullet):
             named_bullets.append(f"{rule_name}: {bullet}")
         else:
@@ -352,93 +376,93 @@ def _pick(data: Mapping[str, Any], keys: Sequence[str], default: Any = "") -> An
     return default
 
 
-def build_prompt(data):
+def _resolve_risk_label(data: Mapping[str, Any]) -> str:
+    """
+    Derive a High / Medium / Low risk label from available data fields.
+    Priority: explicit risk_level field → prob_miss threshold → predicted_label.
+    """
+    raw = str(_pick(data, ["risk_level", "Risk Level", "RiskLevel", "risk"], default="")).strip().lower()
+    if raw in ("high", "medium", "low"):
+        return raw.capitalize()
+
+    prob_miss = data.get("prob_miss", "")
+    try:
+        pm = float(prob_miss)
+        if pm >= 0.65:
+            return "High"
+        elif pm >= 0.40:
+            return "Medium"
+        else:
+            return "Low"
+    except (TypeError, ValueError):
+        pass
 
     predicted_label = int(data.get("predicted_label", 0))
-    prediction = "HIT" if predicted_label == 1 else "MISS"
+    return "Low" if predicted_label == 1 else "High"
 
-    customer = _pick(data, ["Customer Name", "Customer", "Customer_Name", "Ship-To Name", "Ship To Name"])
-    plant = _pick(data, ["Plant", "Plant Name"])
-    material = _pick(data, ["Material description", "Material Description", "Material", "Material ID", "Material Code"])
-    country = _pick(data, ["Country", "Ship-To Country", "Ship To Country"])
-    requested_delivery_date = _pick(
-        data,
-        [
-            "Requested Delivery Date",
-            "Requested delivery date",
-            "Req Delivery Date",
-            "Req. Deliv. Date",
-            "Requested_Delivery_Date",
-        ],
-    )
-    material_availability_date = _pick(
-        data,
-        [
-            "Mat_Avl_Date_OTIF",
-            "Mat Avl Date OTIF",
-            "Material Availability Date",
-            "MAT_AVL_DATE_OTIF",
-        ],
-    )
 
-    prob_hit = _pick(data, ["prob_hit", "hit_probability", "Hit Probability"], default="")
-    prob_miss = _pick(data, ["prob_miss", "risk_score", "Miss Probability"], default="")
+def _fmt_driver(raw_feat: str, val: Any) -> str:
+    """Map a raw feature key to its business name for use inside the prompt."""
+    if not raw_feat:
+        return "None"
+    mapping: dict = {}
+    key_lower = raw_feat.strip().lower()
+    if key_lower in FEATURE_NAME_MAP:
+        mapping = FEATURE_NAME_MAP[key_lower]
+    else:
+        for k, v in FEATURE_NAME_MAP.items():
+            k_lower = k.lower()
+            if k_lower == key_lower or k_lower == f"f_{key_lower}" or f"f_{k_lower}" == key_lower:
+                mapping = v
+                break
 
-    # Rule context (from rule_applied / combined_otif columns) 
+    biz = mapping.get("business_name") or raw_feat.replace("f_", "").replace("_", " ").title()
+    tech = mapping.get("technical_name") or raw_feat
+    return f"{biz} (Technical metric: {tech}) = {val}"
+
+
+def _resolve_risk_direction(shap_val: Any) -> str:
+    """Convert a SHAP value to a human-readable direction label."""
+    try:
+        return "Risk" if float(shap_val) > 0 else "Supporting"
+    except (TypeError, ValueError):
+        return "Risk"
+
+
+def build_prompt(data: Mapping[str, Any]) -> str:
+    # ── Resolve core fields ───────────────────────────────────────────────────
+    risk_label = _resolve_risk_label(data)
+
     rule_applied, combined_otif = _extract_rule_fields(data)
-    data["rule_applied"] = rule_applied
-    data["combined_otif"] = combined_otif
-    rule_section = _build_rule_section(rule_applied)
     model_only = _rule_driven_by_model_only(rule_applied)
 
-    # Compose a concise decision-logic summary for the LLM
+    # Rule explanation in plain language (from RULE_META)
+    rule_codes = _parse_rules(rule_applied)
     if model_only:
-        decision_logic = (
-            "The final outcome was determined solely by the CatBoost model probability. "
-            "No operational business rule overrode the model score. "
-            "Focus the explanation on the SHAP feature drivers below."
+        rule_explanation = (
+            "No single operational condition dominates; the current order outlook reflects "
+            "the combined impact of current order conditions."
         )
     else:
-        parsed = _parse_rules(rule_applied)
-        rule_labels = [RULE_META.get(r, {}).get("label", r) for r in parsed]
-        decision_logic = (
-            f"The final outcome was influenced by {len(parsed)} business rule(s): "
-            + "; ".join(f'"{lb}"' for lb in rule_labels)
-            + ". "
-            "Prioritise these rule signals in the explanation. "
-            "The SHAP feature drivers provide supporting context."
-        )
+        # Build a single, joined explanation from all fired rules
+        explanations = []
+        for code in rule_codes:
+            meta = RULE_META.get(code)
+            if meta and meta["driven_by"] == "rule":
+                explanations.append(meta["explanation"])
+        rule_explanation = " ".join(explanations) if explanations else ""
 
-        # Hard-override guidance
-        if _has_rule(rule_applied, "R2:PGILate"):
-            decision_logic += (
-                " IMPORTANT: R2:PGILate is a hard override — the planned goods-issue date is "
-                "after the delivery deadline, so this order will definitely miss on time. "
-                "State this clearly as the primary reason."
-            )
-        if _has_rule(rule_applied, "R1:QtyShort"):
-            decision_logic += (
-                " R1:QtyShort indicates the confirmed or delivered quantity is below the ordered "
-                "quantity — a direct 'In-Full' risk. Highlight this prominently."
-            )
-        if _has_rule(rule_applied, "R3:ConfMiss"):
-            decision_logic += (
-                " R3:ConfMiss signals that this ship-to location has a very strong pattern of "
-                "missing delivery (>70% miss rate over ≥10 orders). Treat this as a high-confidence "
-                "structural risk."
-            )
-        if _has_rule(rule_applied, "R5:ConfHit"):
-            decision_logic += (
-                " R5:ConfHit indicates this ship-to location has a reliable on-time record (<30% "
-                "miss rate over ≥10 orders). Acknowledge this as a mitigating factor even if other "
-                "risk signals exist."
-            )
-
-    def fmt_driver(raw_feat, val):
+    # ── Top features ─────────────────────────────────────────────────────────
+    features_block_lines: list[str] = []
+    for i in (1, 2, 3):
+        raw_feat = str(data.get(f"raw_top{i}_feature", data.get(f"top{i}_feature", ""))).strip()
+        val = data.get(f"top{i}_value", "")
+        shap_val = data.get(f"top{i}_shap", "")
         if not raw_feat:
-            return "None"
-        mapping = {}
-        key_lower = raw_feat.strip().lower()
+            continue
+
+        mapping: dict = {}
+        key_lower = raw_feat.lower()
         if key_lower in FEATURE_NAME_MAP:
             mapping = FEATURE_NAME_MAP[key_lower]
         else:
@@ -448,92 +472,130 @@ def build_prompt(data):
                     mapping = v
                     break
 
-        biz = mapping.get("business_name") or raw_feat.replace("f_", "").replace("_", " ").title()
-        tech = mapping.get("technical_name") or raw_feat
-        return f"{biz} (Technical metric: {tech}) = {val}"
+        pillar = mapping.get("business_name", raw_feat.replace("f_", "").replace("_", " ").title())
+        description = mapping.get("business_name", raw_feat.replace("f_", "").replace("_", " ").title())
+        direction = _resolve_risk_direction(shap_val)
 
-    top1 = fmt_driver(data.get("raw_top1_feature", data.get("top1_feature")), data.get("top1_value"))
-    top2 = fmt_driver(data.get("raw_top2_feature", data.get("top2_feature")), data.get("top2_value"))
-    top3 = fmt_driver(data.get("raw_top3_feature", data.get("top3_feature")), data.get("top3_value"))
+        features_block_lines.append(
+            f"  - Pillar: {pillar}\n"
+            f"    Description: {description}\n"
+            f"    Direction: {direction}\n"
+            f"    Actual Value: {val}"
+        )
 
-    rules_logic_hint = _lookup_combo_ui(rule_applied) or (
-        _build_rules_logic_bullets(rule_applied)[0] if _build_rules_logic_bullets(rule_applied) else ""
-    )
+    features_block = "\n".join(features_block_lines) if features_block_lines else "  (no feature data available)"
 
-    prompt = f"""
-You are an expert in supply chain planning and OTIF (On-Time In-Full) performance.
+    # ── Suggested actions (optional) ─────────────────────────────────────────
+    suggested_actions = str(
+        _pick(data, ["suggested_actions", "Suggested Actions", "SuggestedActions"], default="")
+    ).strip()
 
-=====================
-ORDER CONTEXT
-=====================
-Customer: {customer}
-Plant: {plant}
-Material: {material}
-Country: {country}
-Requested Delivery Date: {requested_delivery_date}
-Material Availability Date: {material_availability_date}
-Prediction: {prediction} (Hit: {prob_hit} / Miss: {prob_miss})
-Model output (combined_otif): {combined_otif or prediction}
+    # ── Prompt ───────────────────────────────────────────────────────────────
+    prompt = f"""You are a Supply Chain Planner generating concise OTIF explanations for daily order review.
 
-=====================
-DECISION LOGIC
-=====================
-rule_applied column: {rule_applied or "R6:ModelOnly"}
-Rules logic (use this exact meaning in the Rules logic section):
-- {rules_logic_hint}
+AUDIENCE:
+Supply chain planners and supply chain leadership.
 
-Rule(s) Applied: {rule_applied or "R6:ModelOnly"}
+OBJECTIVE:
+Generate short business-friendly explanations that:
+1. Explain delivery risk
+2. Explain the business reason (if business logic influenced outcome)
+3. Show strongest supporting signals
+4. Recommend one operational next action
 
-{rule_section}
+Use only provided inputs. Do not speculate.
 
-Guidance for this explanation:
-{decision_logic}
+====================
+INPUTS
+====================
 
-=====================
-TOP DRIVERS (SHAP)
-=====================
-1. {top1}
-2. {top2}
-3. {top3}
+Prediction: {risk_label}
+Rule Applied: {"ModelOnly" if model_only else " | ".join(rule_codes)}
+Rule Explanation: {rule_explanation}
 
-=====================
-FEATURE DEFINITIONS
-=====================
-{COLUMN_DEFINITIONS}
+Top Features:
+{features_block}
 
-=====================
-INSTRUCTIONS
-=====================
-This prediction combines a machine-learning model score with operational business rules (see DECISION LOGIC above).
+Suggested Actions: {suggested_actions if suggested_actions else "(none provided)"}
 
-Follow these rules when writing the explanation:
-- If a hard business rule fired (e.g. R2:PGILate, R1:QtyShort, R3:ConfMiss), lead with that rule as the primary reason. Do not bury it.
-- If R5:ConfHit fired alongside risk rules, acknowledge the mitigating delivery track record.
-- If only R6:ModelOnly fired, focus entirely on the SHAP feature drivers.
-- In the Rules logic section, always mention the rule by its human-readable name (e.g. "Rule 2", "Rule 1") followed by a colon and its plain-language definition. Example: "Rule 2: The planned goods-issue date is past the delivery deadline, making on-time shipment impossible."
-- Translate all technical feature names into plain supply chain language.
-- Focus on risk signals rather than claiming exact certainty.
-- Use a structured, bulleted format as defined below.
-- Keep descriptions concise and professional.
-- Stick strictly to the provided input data only. Do not include any numbers, percentages, or statistics that are not explicitly provided in the order context or drivers.
-
-=====================
+====================
 OUTPUT FORMAT
-=====================
-Risk: <Insert 🔴 High / 🟡 Medium / 🟢 Low based on prediction and probabilities>
+====================
 
-Rules logic:
-- <Bullet point 1: Start with the rule name e.g. "Rule 2" then a colon, then the plain-language definition of that rule and how it influenced the outcome. Example: "Rule 2: The planned goods-issue date falls after the delivery deadline, making on-time shipment physically impossible — hard override to Miss.">
-- <Bullet point 2: If a second rule fired, follow the same "Rule N: definition" format. If only model-based (Rule 6), write: "Rule 6: No operational rule was triggered — outcome determined entirely by the machine-learning model.">
+<emoji> <Risk Level>
 
-Key risk signals:
-- <Bullet point 1: primary risk signal — lead with any hard rule override if present>
-- <Bullet point 2: secondary risk signal>
-- <Bullet point 3: third risk signal>
+<Business reason sentence>
 
-Recommended actions:
-- <Action 1: logical mitigation step>
-- <Action 2: logical mitigation step>
+- <signal 1>
+- <signal 2>
+
+- <recommended action>
+
+====================
+LOGIC
+====================
+
+1. Risk Display:
+🔴 High
+🟠 Medium
+🟢 Low
+
+2. Business Reason
+
+If Rule Applied is not ModelOnly:
+- Restate the Rule Explanation in plain business language.
+- Must be at least 7 to 11 words long.
+- Explain the operational impact clearly.
+- Do not use rule codes, rule names, or technical terms.
+- Do not use words like "input", "rule", "model", "flag", or "parameter".
+
+Examples:
+- The shipment is planned to leave after the customer's requested delivery date, creating timing risk.
+- The confirmed quantity falls short of what the customer ordered, creating a fulfillment gap.
+- Historical delivery performance for this lane indicates elevated execution risk.
+
+If Rule Applied is ModelOnly:
+- No single operational condition dominates; the current order outlook reflects the combined impact of current order conditions.
+
+3. Supporting Signals
+- Select maximum 2 strongest features.
+- Prefer Risk-direction features over Supporting-direction.
+- Convert technical feature names into business language.
+- Explain the business implication, not the metric.
+- Do not repeat the business reason.
+- Do not mention rankings, calculations, scores, or raw values unless essential for clarity.
+- Signals must reinforce the stated risk level.
+
+Examples:
+- Available inventory is below the level needed to fulfill this order.
+- Material constraints reduce shipment flexibility for this delivery.
+
+4. Recommended Action
+- Generate exactly 1 action.
+- Priority order: Business reason → Features → Suggested Actions.
+- Must directly address the strongest risk factor.
+- Must be operational and immediately executable.
+- Must start with a verb.
+- Do not recommend analysis, review, or monitoring unless risk is Low.
+- No generic or vague actions.
+
+Examples by scenario:
+Shipment timing → Expedite shipment planning and reconfirm the delivery commitment with the carrier.
+Quantity shortfall → Validate allocation and secure the remaining order quantity before shipment.
+Inventory issue → Reallocate available inventory to protect this order's fulfillment.
+Production issue → Confirm production recovery timing directly with plant operations.
+Customer execution → Confirm customer pickup readiness and lock in the delivery commitment.
+Low risk → Continue execution and monitor delivery readiness through shipment.
+
+====================
+STYLE
+====================
+- Output only the explanation. No labels, headers, section titles, or field names.
+- Do not include words like: Input, Rule Applied, Rule Explanation, Prediction, Features, Suggested Actions.
+- Do not include words like: model, AI, algorithm, probability, override, confidence, flag, score, parameter.
+- Do not include order identifiers or customer names.
+- Business language only. Short, clear sentences.
+- Maximum 90 words total.
 """
     return prompt
 
@@ -542,14 +604,14 @@ def generate_explanation(data: Mapping[str, Any]) -> str:
     prompt = build_prompt(data)
 
     system_instruction = (
-        "You are an expert supply chain analyst explaining OTIF predictions for a single order. "
-        "Follow the OUTPUT FORMAT in the user prompt exactly. "
-        "In the Rules logic section, always begin each bullet with the rule name (e.g. 'Rule 1:', 'Rule 2:') "
-        "followed by a plain-language definition of what that rule means and how it influenced the outcome. "
-        "When a hard operational rule (quantity shortfall, late goods issue, poor ship-to history) "
-        "drove the outcome, lead with that fact as the primary signal. "
-        "Use plain supply-chain language for all other sections. "
-        "Keep each bullet to one short sentence."
+        "You are an expert supply chain analyst explaining OTIF delivery risk for a single order. "
+        "Follow the OUTPUT FORMAT in the user prompt exactly — output only the four elements: "
+        "risk emoji + level, business reason sentence, two supporting signal bullets, one action bullet. "
+        "Never include section headers, labels, or field names in your response. "
+        "The business reason must be at least 7 words and written in plain operational language. "
+        "When a hard operational condition drove the outcome (late goods issue, quantity shortfall, "
+        "poor delivery history), lead with that as the primary reason. "
+        "Keep every bullet to one short sentence."
     )
 
     client = _get_client()
@@ -579,16 +641,13 @@ def _humanize_feature_name(raw_feat: str) -> str:
 
 
 def _fallback_explanation(data: Mapping[str, Any], drivers: Optional[Sequence[Tuple[str, Any, Any]]]) -> str:
-    predicted_label = int(data.get("predicted_label", 0))
-    prediction = "HIT" if predicted_label == 1 else "MISS"
+    risk_label = _resolve_risk_label(data)
     prob_miss = data.get("prob_miss", "")
-    risk = "Low" if prediction == "HIT" else "High"
 
     rule_applied, _combined_otif = _extract_rule_fields(data)
     rules = _parse_rules(rule_applied)
 
     bullets = []
-    # Prioritise hard rule signals in fallback too
     for rule in rules:
         meta = RULE_META.get(rule)
         if meta and meta["driven_by"] == "rule":
@@ -599,20 +658,20 @@ def _fallback_explanation(data: Mapping[str, Any], drivers: Optional[Sequence[Tu
     for feat, _, _ in (list(drivers)[:3] if drivers else []):
         if len(bullets) >= 3:
             break
-        bullets.append(f"- {_humanize_feature_name(str(feat))} influenced this {prediction} prediction.")
+        bullets.append(f"- {_humanize_feature_name(str(feat))} contributed to this delivery risk.")
 
     if not bullets:
-        bullets.append("- SHAP drivers were not available for this order.")
+        bullets.append("- Supporting signals were not available for this order.")
 
     rule_bullets = [f"- {b}" for b in _build_rules_logic_bullets(rule_applied)]
 
     return (
-        f"Risk: {risk}\n\n"
+        f"Risk: {risk_label}\n\n"
         f"Rules logic:\n"
         + "\n".join(rule_bullets)
-        + f"\n\nKey risk signals:\n"
+        + "\n\nKey risk signals:\n"
         + "\n".join(bullets)
-        + f"\n\nRecommended actions:\n"
+        + "\n\nRecommended actions:\n"
         f"- Review material availability against the requested delivery date.\n"
         f"- Monitor plant and customer historical OTIF performance (miss probability {prob_miss}%)."
     )
@@ -682,10 +741,15 @@ def summarize_reason(
             if rule_labels:
                 shap_one_liner = "Key signals: " + "; ".join(rule_labels)
             else:
-                driver_bits = [_humanize_feature_name(str(feat)) for feat, _, _ in (list(drivers)[:3] if drivers else [])]
-                shap_one_liner = "Key drivers: " + ", ".join(driver_bits) if driver_bits else "Key drivers: (not available)"
+                driver_bits = [
+                    _humanize_feature_name(str(feat))
+                    for feat, _, _ in (list(drivers)[:3] if drivers else [])
+                ]
+                shap_one_liner = (
+                    "Key drivers: " + ", ".join(driver_bits) if driver_bits else "Key drivers: (not available)"
+                )
 
-    # Remove SHAP numerical values from shap_one_liner (e.g., remove "(+2.848)" or " (+2.848)")
+    # Remove SHAP numerical values from shap_one_liner (e.g. "(+2.848)")
     shap_one_liner = re.sub(r'\s*\(\s*[+-]?\s*\d+\.\d+\s*\)', '', shap_one_liner)
 
     summary_text = _replace_rules_logic_section("\n".join(lines).strip(), rule_applied)
